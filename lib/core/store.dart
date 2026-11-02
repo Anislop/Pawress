@@ -101,6 +101,7 @@ class Store {
   static const _onboarded = 'onboarded';
   static const _settings = 'settings';
   static const _follows = 'follows';
+  static const _favorites = 'favorites';
   static const _notices = 'notices';
   static const _accountName = 'accountName';
   static const _session = 'session';
@@ -126,6 +127,14 @@ class Store {
   Future<void> saveFollows(List<Follow> follows) => _prefs.setString(
     _follows,
     jsonEncode([for (final follow in follows) follow.toJson()]),
+  );
+
+  Future<List<Favorite>> favorites() async =>
+      _list(_favorites, Favorite.fromJson);
+
+  Future<void> saveFavorites(List<Favorite> favorites) => _prefs.setString(
+    _favorites,
+    jsonEncode([for (final favorite in favorites) favorite.toJson()]),
   );
 
   Future<List<UpdateNotice>> notices() async =>

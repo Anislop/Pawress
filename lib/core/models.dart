@@ -266,6 +266,80 @@ class MediaFile {
     final file = MediaFile.fromJson(json);
     return file.path.isEmpty ? null : file;
   }
+
+  /// Leaves out [tempUrl], which expires; without it a preview-only file is
+  /// fetched again when it's opened.
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'path': path,
+    if (previewOnly) 'preview_only': true,
+  };
+}
+
+/// A Patreon poll on a post. The archive only keeps its results.
+class Poll {
+  const Poll({
+    required this.title,
+    required this.choices,
+    this.description,
+    this.createdAt,
+    this.closesAt,
+    this.allowMultiple = false,
+  });
+
+  final String title;
+  final String? description;
+  final List<PollChoice> choices;
+  final DateTime? createdAt;
+  final DateTime? closesAt;
+  final bool allowMultiple;
+
+  int get totalVotes => choices.fold(0, (sum, choice) => sum + choice.votes);
+
+  int get mostVotes => choices.fold(
+    0,
+    (most, choice) => choice.votes > most ? choice.votes : most,
+  );
+
+  bool closedAt(DateTime now) => closesAt != null && closesAt!.isBefore(now);
+
+  /// Null for a post without a poll, which Pawchive sends as `null`.
+  static Poll? tryParse(Object? json) {
+    if (json is! Map<String, dynamic>) return null;
+    final choices = [
+      for (final item in json['choices'] as List? ?? const [])
+        if (item is Map<String, dynamic>)
+          PollChoice(_str(item['text']), _int(item['votes'])),
+    ];
+    if (choices.isEmpty) return null;
+    return Poll(
+      title: _str(json['title']),
+      description: _optStr(json['description']),
+      choices: choices,
+      createdAt: parseDate(json['created_at']),
+      closesAt: parseDate(json['closes_at']),
+      allowMultiple: _bool(json['allow_multiple']),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'title': title,
+    'description': description,
+    'choices': [
+      for (final choice in choices)
+        {'text': choice.text, 'votes': choice.votes},
+    ],
+    'created_at': createdAt?.toIso8601String(),
+    'closes_at': closesAt?.toIso8601String(),
+    'allow_multiple': allowMultiple,
+  };
+}
+
+class PollChoice {
+  const PollChoice(this.text, this.votes);
+
+  final String text;
+  final int votes;
 }
 
 class Post {
@@ -283,6 +357,7 @@ class Post {
     this.nextId,
     this.prevId,
     this.favorites,
+    this.poll,
   });
 
   final String id;
@@ -305,7 +380,13 @@ class Post {
   /// Only known for posts from the popular page.
   final int? favorites;
 
+  /// Only on Patreon posts from creator lists and single posts.
+  final Poll? poll;
+
   String get creatorKey => '$service/$user';
+
+  /// Unique across services, used as the favorite key.
+  String get key => '$service/$user/$id';
   String get url => '$siteUrl/$service/user/$user/post/$id';
 
   /// The main file followed by attachments, without repeats.
@@ -334,7 +415,25 @@ class Post {
     tags: parseTags(json['tags']),
     nextId: _optStr(json['next']),
     prevId: _optStr(json['prev']),
+    favorites: json['favorites'] == null ? null : _int(json['favorites']),
+    poll: Poll.tryParse(json['poll']),
   );
+
+  /// The fields [Post.fromJson] reads, for keeping favorites on the device.
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'user': user,
+    'service': service,
+    'title': title,
+    'content': content,
+    'published': published?.toIso8601String(),
+    'added': added?.toIso8601String(),
+    'file': file?.toJson(),
+    'attachments': [for (final file in attachments) file.toJson()],
+    'tags': tags,
+    'favorites': favorites,
+    'poll': poll?.toJson(),
+  };
 }
 
 class Announcement {
@@ -362,16 +461,36 @@ class CreatorTag {
 }
 
 class Fancard {
-  const Fancard({required this.file, this.added});
+  const Fancard({required this.file, this.price, this.added});
 
   final MediaFile file;
+
+  /// The plan's monthly price in yen, as Pawchive sends it ("1000").
+  final String? price;
   final DateTime? added;
 
+  /// Pawchive sends a fancard's `hash` and `ext` but no `path`; files are
+  /// stored at `/ab/cd/abcd....ext` like every other file.
   static Fancard? tryParse(Map<String, dynamic> json) {
-    final file = MediaFile.tryParse(json['file'] ?? json);
+    final hash = _str(json['hash']);
+    final ext = _str(json['ext']);
+    final file =
+        MediaFile.tryParse(json['file']) ??
+        MediaFile.tryParse(json) ??
+        (hash.length < 4
+            ? null
+            : MediaFile(
+                name: '$hash$ext',
+                path:
+                    '/${hash.substring(0, 2)}/${hash.substring(2, 4)}/$hash$ext',
+              ));
     return file == null
         ? null
-        : Fancard(file: file, added: parseDate(json['added']));
+        : Fancard(
+            file: file,
+            price: _optStr(json['price']),
+            added: parseDate(json['added']),
+          );
   }
 }
 
@@ -410,6 +529,167 @@ class Comment {
     parentId: _optStr(json['parent_id']),
     published: parseDate(json['published']),
   );
+}
+
+/// [comments] as threads: each reply follows its parent, with its depth
+/// below the top level. A reply to a comment that isn't in the list is
+/// shown at the top level.
+List<({Comment comment, int depth})> threadComments(List<Comment> comments) {
+  final ids = {for (final comment in comments) comment.id};
+  final replies = <String, List<Comment>>{};
+  final roots = <Comment>[];
+  for (final comment in comments) {
+    final parent = comment.parentId;
+    if (parent == null || parent == comment.id || !ids.contains(parent)) {
+      roots.add(comment);
+    } else {
+      (replies[parent] ??= []).add(comment);
+    }
+  }
+  final result = <({Comment comment, int depth})>[];
+  final placed = <String>{};
+  void place(Comment comment, int depth) {
+    if (!placed.add(comment.id)) return;
+    result.add((comment: comment, depth: depth));
+    for (final reply in replies[comment.id] ?? const <Comment>[]) {
+      place(reply, depth + 1);
+    }
+  }
+
+  for (final root in roots) {
+    place(root, 0);
+  }
+  // Replies caught in a parent loop never reach a root.
+  for (final comment in comments) {
+    place(comment, 0);
+  }
+  return result;
+}
+
+/// A post the user liked, kept whole so the Favorites page needs no
+/// requests.
+class Favorite {
+  const Favorite({
+    required this.post,
+    required this.favoritedAt,
+    this.synced = false,
+  });
+
+  final Post post;
+  final DateTime favoritedAt;
+
+  /// Whether this has been seen in the account's favorite posts, so its
+  /// absence there means it was removed on the website.
+  final bool synced;
+
+  String get key => post.key;
+
+  Favorite copyWith({Post? post, bool? synced}) => Favorite(
+    post: post ?? this.post,
+    favoritedAt: favoritedAt,
+    synced: synced ?? this.synced,
+  );
+
+  factory Favorite.fromJson(Map<String, dynamic> json) => Favorite(
+    post: Post.fromJson(json['post'] as Map<String, dynamic>),
+    favoritedAt: parseDate(json['favoritedAt']) ?? DateTime.now().toUtc(),
+    synced: _bool(json['synced']),
+  );
+
+  Map<String, dynamic> toJson() => {
+    'post': post.toJson(),
+    'favoritedAt': favoritedAt.toIso8601String(),
+    'synced': synced,
+  };
+}
+
+/// A chat in a Patreon creator's community.
+class CommunityChannel {
+  const CommunityChannel({
+    required this.id,
+    required this.name,
+    this.count = 0,
+    this.active = false,
+  });
+
+  final String id;
+  final String name;
+
+  /// Archived messages.
+  final int count;
+
+  /// The channel the page shows.
+  final bool active;
+}
+
+/// A message in a community chat, read from the web page.
+class CommunityMessage {
+  const CommunityMessage({
+    required this.author,
+    required this.content,
+    this.time,
+    this.fromCreator = false,
+    this.avatarUrl,
+    this.avatarLetter,
+    this.avatarHue,
+    this.replyAuthor,
+    this.replyText,
+    this.images = const [],
+    this.embeds = const [],
+    this.continued = false,
+  });
+
+  final String author;
+
+  /// HTML.
+  final String content;
+  final DateTime? time;
+  final bool fromCreator;
+
+  /// The creator's icon; other members get a letter on a colored circle.
+  final String? avatarUrl;
+  final String? avatarLetter;
+  final int? avatarHue;
+
+  /// The message this one answers, as the site quotes it.
+  final String? replyAuthor;
+  final String? replyText;
+
+  /// Attached images: the full file and the thumbnail the page shows.
+  final List<({String url, String thumbnail})> images;
+
+  /// Link previews, such as "21.51 MB file on MEGA".
+  final List<({String url, String title})> embeds;
+
+  /// Another message from the previous message's author, shown without a
+  /// name or avatar.
+  final bool continued;
+}
+
+/// One page of a community chat: 25 messages, oldest first, with the newest
+/// page at offset 0.
+class CommunityPage {
+  const CommunityPage({
+    this.channels = const [],
+    this.messages = const [],
+    this.total = 0,
+    this.end = 0,
+  });
+
+  final List<CommunityChannel> channels;
+  final List<CommunityMessage> messages;
+
+  /// Messages in the channel.
+  final int total;
+
+  /// The 1-based index of this page's last message, from "Showing 1 - 25
+  /// of 114".
+  final int end;
+
+  bool get hasOlder => end < total;
+
+  CommunityChannel? get channel =>
+      channels.where((c) => c.active).firstOrNull ?? channels.firstOrNull;
 }
 
 /// A followed creator and what the update checker last saw of them.

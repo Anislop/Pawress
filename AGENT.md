@@ -33,15 +33,16 @@ lib/
   main.dart            App root: splash -> onboarding -> home, revealed from the bottom
   core/                No widgets (except updates.dart's Flutter binding); safe for the background isolate
     config.dart        Hosts, user agent, page size
-    models.dart        Creator, Post, MediaFile, Follow, UpdateNotice, ... and JSON parsing
-    api.dart           PawchiveApi (all HTTP); scrapers for DMs, popular posts, similar artists
+    models.dart        Creator, Post, MediaFile, Poll, Favorite, Follow, Community*, UpdateNotice, ... and JSON parsing; threadComments
+    api.dart           PawchiveApi (all HTTP); scrapers for DMs, popular posts, similar artists, community chats
     store.dart         Store: SharedPreferencesAsync + secure storage (session cookie); AppSettings
+    backup.dart        Backup file (follows, likes, sign-in sealed with AES-GCM + PBKDF2), mergeFollows / mergeFavorites
     feeds.dart         Feed (paged ChangeNotifier), OffsetFeed, PopularFeed, ForYouFeed + rankForYou, FollowingFeed (k-way merge)
     creators.dart      CreatorDirectory: cached, throttled profile lookups (feed posts carry only ids)
     updates.dart       UpdateChecker, Notifier (local notifications), BackgroundUpdates (WorkManager)
     downloads.dart     DownloadManager queue (2 at once, 1 s apart) writing to a SAF folder via DownloadTarget
     app_update.dart    AppUpdater: GitHub releases check (AppRelease.newest) and install via the pawress/updater channel
-    app_state.dart     AppState: settings, account, follows, notices, favorites sync
+    app_state.dart     AppState: settings, account, follows, liked posts, notices, favorites sync, backup import/export
   ui/
     app_scope.dart     AppScope.of(context) / AppScope.read(context) give AppState
     theme.dart         Palette (from assets), buildTheme(), BrandMark, SectionLabel
@@ -50,16 +51,21 @@ lib/
     onboarding.dart    Four parallax slides (art lags, text leads), notification permission, optional sign-in
     home.dart          HomeScreen (floating SliverAppBar + For You / Following / Popular tabs, Popular's bottom bar) and Sidebar (drawer)
     popular.dart       PopularTab: popular artists (from /creators, sorted on device) and PopularFeed posts
-    post_card.dart     X-style post row, MediaGrid, openPost/openCreator/openViewer helpers
+    post_card.dart     X-style post row, PostActions (comments / like), MediaGrid, openPost/openCreator/openViewer helpers
+    comments.dart      CommentList (threaded, left-aligned) and showComments (bottom sheet)
+    poll.dart          PollView: a Patreon poll's results as bars
     autoplay.dart      FeedAutoplay (picks the one playing tile) and AutoplayMedia (muted video / GIF tile)
     downloads.dart     downloadFiles() (folder choice + enqueue), pickDownloadFolder(), DownloadsPage
     update_dialog.dart showUpdateDialog: changelog, progress, install errors
-    post_page.dart     Full post: text, media, attachments, tags, comments
-    media_viewer.dart  Full-screen swipe viewer: zoomable images, Chewie video
+    post_page.dart     Full post: text, poll, actions, media, attachments, tags, comments
+    media_viewer.dart  Full-screen viewer: every image and video in one vertical scroll, zoomable images, Chewie video
     creator_page.dart  Artist profile (banner, site, links, Follow, Similar artists sheet) + tabs; FollowButton, ArtistTile
-    following_page.dart, notifications_page.dart, search_page.dart, settings_page.dart, login_page.dart
+    community_page.dart CommunityChatPage: a Patreon community channel as a chat log, newest at the bottom
+    backup.dart        Export / import dialogs (SAF folder and file pickers)
+    favorites_page.dart, following_page.dart, notifications_page.dart, search_page.dart, settings_page.dart, login_page.dart
 test/
-  core_test.dart            Parsing, URLs, ranking, entity decoding, DM / popular / similar-artist scraping
+  core_test.dart            Parsing, URLs, ranking, entity decoding, polls, fancards, comment threads, DM / popular / similar-artist / community scraping
+  backup_test.dart          Backup encoding and sealing, merges, AppState likes and their account sync
   update_checker_test.dart  UpdateChecker against a fake Pawchive (MockClient + in-memory prefs)
   downloads_test.dart       DownloadManager: URL resolution, naming, failure and retry (in-memory target)
   app_update_test.dart      Release picking, nightly notes, AppUpdater over a mocked channel and GitHub
@@ -79,6 +85,25 @@ docs/pawchive-api.md        API reference and quirks
 - **Full files.** `MediaFile.fullUrl` gives `temp_url` or the file host URL,
   or null when the post must be fetched again; the viewer does that.
   Thumbnails exist only for images.
+- **Favorites (likes).** The heart on a post (`PostActions`) stores the whole
+  `Post` locally (`Favorite`, without `temp_url`s, which expire) and, when
+  signed in, syncs with the account's favorite posts the same way follows do
+  (`Favorite.synced`). The Favorites page in the sidebar lists them with no
+  requests. Like counts exist only on popular posts.
+- **Comments.** `threadComments` puts each reply under its parent with its
+  depth; `CommentList` indents replies (up to 4 levels) and keeps every row
+  left-aligned. The comments button opens them in a sheet (`showComments`),
+  or on the post page loads them inline and scrolls there.
+- **Community.** Patreon creators get a Community tab listing channels from
+  the scraped page; a channel opens `CommunityChatPage`, a reversed list that
+  loads older pages (25 messages, `o` increasing) as you scroll up.
+- **Backup.** Settings exports follows and likes as readable JSON in a folder
+  picked with SAF, plus the session cookie and account name sealed with a
+  password (PBKDF2-HMAC-SHA256, run in an isolate, then AES-256-GCM).
+  Importing merges: existing follows and likes stay, imported follows start
+  without update state (so the first check only records a baseline) and
+  unsynced (so the account sync adds them). Importing a sign-in while signed
+  in signs out first so old synced marks can't delete anything.
 - **Following.** Follows are stored locally. When signed in, they sync both ways
   with Pawchive favorite creators (`AppState.syncFavorites`): `Follow.synced`
   marks follows already seen on the account, so a missing synced follow means
@@ -104,6 +129,13 @@ docs/pawchive-api.md        API reference and quirks
 - **Sidebar gesture.** `HomeScreen._onOverscroll` opens the drawer when the
   For You tab is dragged past its left edge; the drawer closes with its own
   drag.
+- **Media viewer.** One `CustomScrollView` centered on the tapped item, so
+  earlier items grow upward without moving it. Each item reports its
+  visibility; the one filling most of the screen is "current" (top bar count,
+  download, the video that may play). Images show the thumbnail at once and
+  load the full file only while on screen, through `_FullFileGate` (two at a
+  time, one second apart). The list stops scrolling while an image is
+  zoomed.
 - **Autoplay.** Each GIF or video tile reports its visibility (visibility_detector)
   to `FeedAutoplay.instance`, which picks one tile at 60%+ visibility. The tile
   waits 400 ms, then loads the full file (fetching the post first for

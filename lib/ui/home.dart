@@ -8,6 +8,7 @@ import 'app_scope.dart';
 import 'creator_page.dart';
 import 'update_dialog.dart';
 import 'downloads.dart';
+import 'favorites_page.dart';
 import 'following_page.dart';
 import 'login_page.dart';
 import 'notifications_page.dart';
@@ -391,6 +392,11 @@ class Sidebar extends StatelessWidget {
               icon: Icons.people_outline_rounded,
               label: 'Following',
               onTap: () => open((_) => const FollowingPage()),
+            ),
+            _SidebarItem(
+              icon: Icons.favorite_border_rounded,
+              label: 'Favorites',
+              onTap: () => open((_) => const FavoritesPage()),
             ),
             _SidebarItem(
               icon: Icons.notifications_none_rounded,

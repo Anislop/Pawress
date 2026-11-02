@@ -193,6 +193,29 @@ class PawchiveApi {
     }),
   );
 
+  /// Read from a Patreon creator's community web page; the API has no
+  /// community endpoint. Without [channel] the site redirects to the first
+  /// channel. A creator with no archived community is a 404, read as an
+  /// empty page.
+  Future<CommunityPage> community(
+    String service,
+    String id, {
+    String? channel,
+    int offset = 0,
+  }) async {
+    try {
+      return parseCommunityPage(
+        await _html(
+          '/$service/user/$id/community${channel == null ? '' : '/$channel'}',
+          {'o': offset == 0 ? null : '$offset'},
+        ),
+      );
+    } on ApiException catch (e) {
+      if (e.status == 404) return const CommunityPage();
+      rethrow;
+    }
+  }
+
   /// Read from the creator's "similar artists" web page.
   Future<List<Creator>> recommendedCreators(String service, String id) async =>
       parseCreatorCards(await _html('/$service/user/$id/recommended'));
@@ -218,6 +241,25 @@ class PawchiveApi {
 
   Future<void> removeFavoriteCreator(String service, String id) =>
       _send('DELETE', _uri('/favorites/creator/$service/$id'));
+
+  Future<List<Post>> favoritePosts() async => [
+    for (final json in _maps(
+      await _get('/account/favorites', {'type': 'post'}),
+    ))
+      if (Post.fromJson(json) case final post
+          when post.id.isNotEmpty && post.user.isNotEmpty)
+        post,
+  ];
+
+  Future<void> addFavoritePost(Post post) => _send(
+    'POST',
+    _uri('/favorites/post/${post.service}/${post.user}/${post.id}'),
+  );
+
+  Future<void> removeFavoritePost(Post post) => _send(
+    'DELETE',
+    _uri('/favorites/post/${post.service}/${post.user}/${post.id}'),
+  );
 }
 
 Object? _decodeJson(String body) => jsonDecode(body);
@@ -351,3 +393,125 @@ List<Creator> parseCreatorCards(String html) => [
       ),
     ),
 ];
+
+final _channelLink = RegExp(
+  r'<a\s+class="chat-page__channel([^"]*)"\s+href="[^"]*/community/([^"/?]+)"'
+  r'[^>]*>(.*?)</a>',
+  dotAll: true,
+);
+final _channelName = RegExp(
+  r'<span class="chat-page__channel-name">\s*(.*?)\s*</span>',
+  dotAll: true,
+);
+final _channelCount = RegExp(r'chat-page__channel-count">\s*(\d+)');
+final _messageStart = RegExp(r'<div class="cmsg[\s"]');
+final _messageAuthor = RegExp(r'<span class="cmsg__author"[^>]*>(.*?)</span>');
+final _messageAvatar = RegExp(r'<img class="cmsg__avatar" src="([^"]+)"');
+final _messageLetter = RegExp(
+  r'cmsg__avatar--letter"\s+style="background:\s*hsl\((\d+)[^"]*">([^<]*)<',
+);
+final _messageTime = RegExp(r'class="cmsg__time"\s+datetime="([^"]+)"');
+final _messageReplyAuthor = RegExp(
+  r'<span class="cmsg__reply-author"[^>]*>(.*?)</span>',
+  dotAll: true,
+);
+final _messageReplyText = RegExp(
+  r'<span class="cmsg__reply-text">(.*?)</span>',
+  dotAll: true,
+);
+final _messageText = RegExp(
+  r'<div class="cmsg__text">(.*?)</div>',
+  dotAll: true,
+);
+final _messageImage = RegExp(
+  r'<a class="cmsg__image" href="([^"]+)"[^>]*>\s*<img src="([^"]+)"',
+);
+final _messageEmbed = RegExp(
+  r'<a class="cmsg__embed" href="([^"]+)"[^>]*>(.*?)</a>',
+  dotAll: true,
+);
+final _messageRange = RegExp(r'Showing\s+\d+\s*-\s*(\d+)\s+of\s+(\d+)');
+
+String _absolute(String url) => url.startsWith('/') ? '$siteUrl$url' : url;
+
+/// The text of an element, without its tags.
+String _text(String html) =>
+    decodeEntities(html.replaceAll(RegExp(r'<[^>]*>'), '')).trim();
+
+@visibleForTesting
+CommunityPage parseCommunityPage(String html) {
+  final channels = [
+    for (final link in _channelLink.allMatches(html))
+      CommunityChannel(
+        id: link.group(2)!,
+        name: _text(
+          _channelName.firstMatch(link.group(3)!)?.group(1) ?? link.group(2)!,
+        ),
+        count:
+            int.tryParse(
+              _channelCount.firstMatch(link.group(3)!)?.group(1) ?? '',
+            ) ??
+            0,
+        active: link.group(1)!.contains('is-active'),
+      ),
+  ];
+  final starts = [for (final m in _messageStart.allMatches(html)) m.start];
+  final messages = <CommunityMessage>[];
+  for (final (index, start) in starts.indexed) {
+    final block = html.substring(
+      start,
+      index + 1 < starts.length ? starts[index + 1] : html.length,
+    );
+    final opening = block.substring(0, block.indexOf('>') + 1);
+    final author = _messageAuthor.firstMatch(block)?.group(1);
+    final previous = messages.lastOrNull;
+    // A message without a head continues the previous author's run.
+    final continued =
+        !opening.contains('cmsg--head') && author == null && previous != null;
+    final avatar = _messageAvatar.firstMatch(block)?.group(1);
+    final letter = _messageLetter.firstMatch(block);
+    final replyAuthor = _messageReplyAuthor.firstMatch(block)?.group(1);
+    final replyText = _messageReplyText.firstMatch(block)?.group(1);
+    messages.add(
+      CommunityMessage(
+        author: author != null
+            ? _text(author)
+            : continued
+            ? previous.author
+            : '',
+        content: _messageText.firstMatch(block)?.group(1)?.trim() ?? '',
+        time: parseDate(_messageTime.firstMatch(block)?.group(1)),
+        fromCreator: continued
+            ? previous.fromCreator
+            : opening.contains('cmsg--creator'),
+        avatarUrl: avatar == null ? null : _absolute(avatar),
+        avatarLetter: letter == null ? null : _text(letter.group(2)!),
+        avatarHue: letter == null ? null : int.tryParse(letter.group(1)!),
+        replyAuthor: replyAuthor == null ? null : _text(replyAuthor),
+        replyText: replyText == null ? null : _text(replyText),
+        images: [
+          for (final image in _messageImage.allMatches(block))
+            (
+              url: _absolute(decodeEntities(image.group(1)!)),
+              thumbnail: _absolute(decodeEntities(image.group(2)!)),
+            ),
+        ],
+        embeds: [
+          for (final embed in _messageEmbed.allMatches(block))
+            (
+              url: decodeEntities(embed.group(1)!),
+              title: _text(embed.group(2)!),
+            ),
+        ],
+        continued: continued,
+      ),
+    );
+  }
+  final range = _messageRange.firstMatch(html);
+  return CommunityPage(
+    channels: channels,
+    messages: messages,
+    end: int.tryParse(range?.group(1) ?? '') ?? messages.length,
+    total: int.tryParse(range?.group(2) ?? '') ?? messages.length,
+  );
+}

@@ -4,13 +4,14 @@ import '../core/api.dart';
 import '../core/feeds.dart';
 import '../core/models.dart';
 import 'app_scope.dart';
+import 'community_page.dart';
 import 'post_card.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
 /// An artist's profile: banner, original site, linked accounts and a Follow
-/// button, then tabs for posts, announcements, tags, DMs and (Fanbox only)
-/// fancards.
+/// button, then tabs for posts, announcements, tags, DMs, (Patreon only)
+/// community chats and (Fanbox only) fancards.
 class CreatorPage extends StatefulWidget {
   const CreatorPage({super.key, required this.creator, this.initialTag});
 
@@ -34,11 +35,15 @@ class _CreatorPageState extends State<CreatorPage>
   );
   Future<List<Creator>>? _links;
 
+  /// The community's newest page, read with its channel list.
+  CommunityPage? _community;
+
   List<String> get _tabLabels => [
     'Posts',
     'Announcements',
     'Tags',
     'DMs',
+    if (widget.creator.service == 'patreon') 'Community',
     if (widget.creator.service == 'fanbox') 'Fancards',
   ];
 
@@ -247,24 +252,89 @@ class _CreatorPageState extends State<CreatorPage>
                 footer: item.added == null ? '' : 'Added ${item.added}',
               ),
             ),
+            if (c.service == 'patreon')
+              _FutureList<CommunityChannel>(
+                load: () async {
+                  final page = await AppScope.read(context).api
+                      .community(c.service, c.id);
+                  _community = page;
+                  return page.channels;
+                },
+                empty: 'No community archived',
+                itemBuilder: (channel) => ListTile(
+                  contentPadding: const EdgeInsets.fromLTRB(16, 4, 12, 4),
+                  leading: const Icon(Icons.tag_rounded, color: pawPink),
+                  title: Text(
+                    channel.name,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  subtitle: Text(
+                    channel.count == 1
+                        ? '1 message'
+                        : '${compactCount(channel.count)} messages',
+                    style: TextStyle(color: ink(.5)),
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => CommunityChatPage(
+                        creator: c,
+                        channel: channel,
+                        initial: channel.active ? _community : null,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             if (c.service == 'fanbox')
               _FutureList<Fancard>(
                 load: () =>
                     AppScope.read(context).api.fancards(c.service, c.id),
                 empty: 'No fancards',
-                itemBuilder: (item) => Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: NetImage(
-                      item.file.thumbnailUrl ?? '',
-                      fit: BoxFit.fitWidth,
-                    ),
-                  ),
-                ),
+                itemBuilder: (item) => _FancardTile(item),
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// A supporter card: the plan's card art with its price and date.
+class _FancardTile extends StatelessWidget {
+  const _FancardTile(this.fancard);
+
+  final Fancard fancard;
+
+  @override
+  Widget build(BuildContext context) {
+    final f = fancard;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: NetImage(
+              f.file.thumbnailUrl ?? '',
+              fit: BoxFit.fitWidth,
+              width: double.infinity,
+              placeholder: AspectRatio(
+                aspectRatio: 1.6,
+                child: ColoredBox(color: panel),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            [
+              if (f.price != null) '¥${f.price} plan',
+              if (f.added != null) 'added ${longDate(f.added)}',
+            ].join(' · '),
+            style: TextStyle(color: ink(.55), fontSize: 13),
+          ),
+        ],
       ),
     );
   }

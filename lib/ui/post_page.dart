@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import '../core/api.dart';
 import '../core/models.dart';
 import 'app_scope.dart';
+import 'comments.dart';
 import 'downloads.dart';
 import 'creator_page.dart';
+import 'poll.dart';
 import 'post_card.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -37,6 +39,7 @@ class _PostPageState extends State<PostPage> {
   Post? _post;
   String? _error;
   Future<List<Comment>>? _comments;
+  final _commentsKey = GlobalKey();
 
   @override
   void initState() {
@@ -62,6 +65,26 @@ class _PostPageState extends State<PostPage> {
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
     }
+  }
+
+  void _loadComments(Post post) => setState(() {
+    _comments ??= AppScope.read(context).api
+        .comments(post.service, post.user, post.id);
+  });
+
+  /// Loads the comments and scrolls down to them.
+  void _showComments(Post post) {
+    _loadComments(post);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final target = _commentsKey.currentContext;
+      if (target != null && target.mounted) {
+        Scrollable.ensureVisible(
+          target,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    });
   }
 
   @override
@@ -163,6 +186,12 @@ class _PostPageState extends State<PostPage> {
                 const SizedBox(height: 12),
                 HtmlContent(post.content),
               ],
+              if (post.poll != null) ...[
+                const SizedBox(height: 12),
+                PollView(post.poll!),
+              ],
+              const SizedBox(height: 4),
+              PostActions(post: post, onComments: () => _showComments(post)),
             ],
           ),
         ),
@@ -214,23 +243,20 @@ class _PostPageState extends State<PostPage> {
             ),
           ),
         ],
-        const SectionLabel('Comments'),
+        SectionLabel('Comments', key: _commentsKey),
         _comments == null
             ? Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: OutlinedButton.icon(
-                  onPressed: () => setState(() {
-                    _comments = state.api.comments(
-                      post.service,
-                      post.user,
-                      post.id,
-                    );
-                  }),
-                  icon: const Icon(Icons.chat_bubble_outline_rounded),
-                  label: const Text('Load comments'),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    onPressed: () => _loadComments(post),
+                    icon: const Icon(Icons.chat_bubble_outline_rounded),
+                    label: const Text('Load comments'),
+                  ),
                 ),
               )
-            : _CommentList(_comments!),
+            : CommentList(_comments!),
       ],
     );
   }
@@ -289,71 +315,5 @@ class _MediaBlock extends StatelessWidget {
               ),
       ),
     ),
-  );
-}
-
-class _CommentList extends StatelessWidget {
-  const _CommentList(this.comments);
-
-  final Future<List<Comment>> comments;
-
-  @override
-  Widget build(BuildContext context) => FutureBuilder<List<Comment>>(
-    future: comments,
-    builder: (context, snapshot) {
-      if (snapshot.hasError) {
-        return Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text('${snapshot.error}', style: TextStyle(color: ink(.6))),
-        );
-      }
-      final list = snapshot.data;
-      if (list == null) {
-        return const Padding(
-          padding: EdgeInsets.all(24),
-          child: Center(child: CircularProgressIndicator()),
-        );
-      }
-      if (list.isEmpty) {
-        return Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text('No comments.', style: TextStyle(color: ink(.5))),
-        );
-      }
-      return Column(
-        children: [
-          for (final comment in list)
-            Padding(
-              padding: EdgeInsets.fromLTRB(
-                comment.parentId == null ? 16 : 40,
-                8,
-                16,
-                8,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text.rich(
-                    TextSpan(
-                      children: [
-                        TextSpan(
-                          text: comment.commenter,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        TextSpan(
-                          text: '  ·  ${shortTime(comment.published)}',
-                          style: TextStyle(color: ink(.5)),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  HtmlContent(comment.content, fontSize: 14),
-                ],
-              ),
-            ),
-        ],
-      );
-    },
   );
 }

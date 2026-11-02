@@ -39,10 +39,12 @@ applies.
 | `GET /{service}/user/{id}/announcements` | `[{hash, content (HTML), added}]` |
 | `GET /{service}/user/{id}/tags` | `[{tag, post_count}]` |
 | `GET /{service}/user/{id}/links` | Linked creator accounts on other services |
-| `GET /{service}/user/{id}/fancards` | Fanbox only |
+| `GET /{service}/user/{id}/fancards` | Fanbox only. `[{id, user_id, file_id, price, hash, ext, mime, size, added, ...}]` with no `path`; see Quirks. |
 | `GET /{service}/user/{id}/post/{post}/comments` | `[{id, parent_id, commenter_name, content, published}]` |
 | `GET /creators` | Every creator, about 16 MB. Only used by artist search, once per session. |
 | `GET /account/favorites?type=artist` | Needs the session cookie (401 otherwise). |
+| `GET /account/favorites?type=post` | The account's favorite posts, read as posts (`id`, `user`, `service`, ...). Needs the session cookie. Not checked against a live account; the schema only lists creator fields. |
+| `POST`/`DELETE /favorites/post/{service}/{creator}/{post}` | Like / unlike a post. Needs the session cookie. |
 
 Web pages Pawress scrapes (`https://pawchive.pw`, not the API):
 
@@ -50,6 +52,7 @@ Web pages Pawress scrapes (`https://pawchive.pw`, not the API):
 | --- | --- |
 | `/{service}/user/{id}/dms` | DM cards; see Quirks. |
 | `/posts/popular?date=&period=&o=` | 50 `article.post-card` per page with `data-id`, `data-service`, `data-user`, a `post-card__header` title, a `/thumbnail/data{path}` image, `<time datetime="YYYY-MM-DD HH:MM:SS">` and "N favorites". No params means the last 24 hours. `period=day` takes any date; `week` and `month` only work with the start date the page itself links to in `#daily`, `#weekly` and `#monthly` (a week started 2026-10-27 for 2026-11-02, a month starts on the 1st). Other dates return no posts. |
+| `/{service}/user/{id}/community[/{channel}]?o=` | Patreon community chats; see Quirks. |
 | `/{service}/user/{id}/recommended` | "Similar artists": up to 50 `a.user-card` with `data-id`, `data-service` and `div.user-card__name`. No favorites or dates. |
 | `POST`/`DELETE /favorites/creator/{service}/{id}` | Needs the session cookie. |
 
@@ -82,5 +85,29 @@ Web pages Pawress scrapes (`https://pawchive.pw`, not the API):
 - Scraped text can contain numeric HTML entities (`&#x27;`), and so can the
   recent feed's `substring`. `decodeEntities` in `lib/core/models.dart`
   handles both.
+- **Fancards** have no `path` or file object. The file lives at
+  `/{hash[0:2]}/{hash[2:4]}/{hash}{ext}` (ext includes the dot), so the
+  thumbnail is `https://img.pawchive.pw/thumbnail/data/b8/04/b804....webp`.
+  `price` is the plan's yen price as a string. See `Fancard.tryParse`.
+- **Polls.** Creator post lists and single posts have `poll` (`null` without
+  one): `{title, description, choices: [{text, votes}], created_at,
+  closes_at, allow_multiple}`, dates with a `+00:00` zone. The site-wide
+  `/posts` list has no `poll` key. Only results are archived.
+- **Post favorite counts** exist only on the popular page ("N favorites");
+  post JSON and the post web page have none.
+- **There's no community endpoint.** `/api/v1/.../community` is a 404, so
+  Pawress scrapes the web page (`parseCommunityPage`). `/community` redirects
+  (302) to the first channel, `/community/{channel}`; a creator without a
+  community is a 404. Channels are `a.chat-page__channel` (`is-active` on
+  the shown one) with `chat-page__channel-name` and `-count`. Pages hold 25
+  `div.cmsg` messages, oldest first, but `o=0` is the **newest** page, so
+  older messages are at higher offsets; "Showing 1 - 25 of 114" gives the
+  range. A message with `cmsg--head` has `cmsg__author`, `cmsg__time`
+  (`datetime`, UTC), an avatar (`img.cmsg__avatar` for the creator, a letter
+  on `hsl(...)` for members), an optional `cmsg__reply` quote, and
+  `cmsg--creator` for the creator. One without a head continues the previous
+  author. `cmsg__text` holds the HTML, followed by `a.cmsg__image` (full
+  file `href`, thumbnail `img src`, sometimes Patreon's CDN) and
+  `a.cmsg__embed` link previews.
 - **Popular artists** have no endpoint either; `/artists` on the site sorts
   the same `/creators` data that Pawress sorts on the device.
