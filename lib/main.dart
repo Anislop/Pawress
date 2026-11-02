@@ -14,7 +14,13 @@ Future<void> main() async {
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   final state = AppState();
   runApp(PawressApp(state: state));
-  await Notifier.init();
+  // Notifications are optional; a failure here must not hold the app on
+  // the splash screen.
+  try {
+    await Notifier.init();
+  } catch (e) {
+    debugPrint('Notifications unavailable: $e');
+  }
   await state.init();
 }
 

@@ -140,15 +140,21 @@ class Notifier {
   static Future<void> init() async {
     if (_ready) return;
     _ready = true;
-    await _plugin.initialize(
-      settings: const InitializationSettings(
-        android: AndroidInitializationSettings('@drawable/ic_stat_paw'),
-      ),
-      onDidReceiveNotificationResponse: (response) {
-        final payload = response.payload;
-        if (payload != null) taps.add(payload);
-      },
-    );
+    try {
+      await _plugin.initialize(
+        settings: const InitializationSettings(
+          android: AndroidInitializationSettings('@drawable/ic_stat_paw'),
+        ),
+        onDidReceiveNotificationResponse: (response) {
+          final payload = response.payload;
+          if (payload != null) taps.add(payload);
+        },
+      );
+    } catch (_) {
+      // Let a later call try again.
+      _ready = false;
+      rethrow;
+    }
   }
 
   /// The creator key of the notification that launched the app, if any.

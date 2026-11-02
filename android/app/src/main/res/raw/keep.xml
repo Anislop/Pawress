@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Release builds shrink resources, and Dart only names the notification
+     icon as a string (Notifier.init in lib/core/updates.dart), so the
+     shrinker can't see it's used. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/ic_stat_paw" />
