@@ -47,9 +47,4 @@ app.*.map.json
 # Widget Preview related
 .widget_preview/
 
-# Agent Configuration
-AGENT.md
-CLAUDE.md
-AGENTS.md
-
 *.psd
