@@ -51,3 +51,5 @@ app.*.map.json
 AGENT.md
 CLAUDE.md
 AGENTS.md
+
+*.psd
