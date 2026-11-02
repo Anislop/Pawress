@@ -1,0 +1,148 @@
+name: CD
+
+# Every push to main publishes the APKs to the rolling `nightly` prerelease;
+# a `v*` tag publishes them as a versioned release.
+#
+# The in-app updater (lib/core/app_update.dart) reads this repository's
+# releases and installs the asset named `pawress-<version>-<build>.apk`,
+# comparing <build> (the CD run number, also the APK's versionCode) with the
+# installed build. Keep the release APK's name in that form. Run numbers
+# belong to this workflow: renaming or recreating it restarts them, and
+# installed builds would never see a newer one.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: 3.47.4
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build APKs
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      # Without these secrets the release APK falls back to the runner's
+      # throwaway debug key, so it cannot update an installed earlier build
+      # (the in-app updater reports a different signing key).
+      - name: Set up release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::ANDROID_KEYSTORE_BASE64 is not set; the release APK is signed with a debug key."
+            exit 0
+          fi
+          keystore="$RUNNER_TEMP/release.jks"
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          {
+            echo "storeFile=$keystore"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > android/key.properties
+
+      - run: flutter pub get
+
+      - name: Build
+        run: |
+          for mode in release debug; do
+            flutter build apk --$mode \
+              --build-number=${{ github.run_number }} \
+              --dart-define=UPDATE_REPOSITORY=${{ github.repository }}
+          done
+
+      # The updater installs only the release APK; the debug one is for
+      # testing and is signed with a different key.
+      - name: Name the APKs
+        run: |
+          version=$(sed -n 's/^version: *\([^+]*\).*/\1/p' pubspec.yaml)
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "dist/pawress-${version}-${{ github.run_number }}.apk"
+          cp build/app/outputs/flutter-apk/app-debug.apk \
+            "dist/pawress-${version}-${{ github.run_number }}-debug.apk"
+
+      # APKs also go to GitHub Releases; short retention keeps artifact
+      # storage under the account quota.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pawress-apks
+          path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish to GitHub Releases
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: pawress-apks
+          path: dist
+
+      - name: Publish versioned release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.apk \
+            --title "Pawress $GITHUB_REF_NAME" \
+            --generate-notes
+
+      # The in-app update dialog shows the commit message, up to the marker
+      # (AppRelease.commitEnd in lib/core/app_update.dart): its first line
+      # as the title and the rest as the description.
+      - name: Publish nightly prerelease
+        if: github.ref == 'refs/heads/main'
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          {
+            printf '%s\n\n' "$COMMIT_MESSAGE"
+            echo "<!-- end of commit message -->"
+            echo "Built from ${GITHUB_SHA::7}. Install pawress-*.apk; the debug APK is for testing and cannot update it."
+          } > notes.md
+          gh release delete nightly --yes --cleanup-tag || true
+          gh release create nightly dist/*.apk \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Nightly (${GITHUB_SHA::7})" \
+            --notes-file notes.md
