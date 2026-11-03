@@ -460,6 +460,60 @@ class CreatorTag {
       CreatorTag(_str(json['tag']), _int(json['post_count']));
 }
 
+/// A post or artist page on Pawchive, as the random pages redirect to:
+/// `/{service}/user/{user}[/post/{post}]`.
+class PawchiveLink {
+  const PawchiveLink({required this.service, required this.user, this.post});
+
+  final String service;
+  final String user;
+  final String? post;
+
+  static final _pattern = RegExp(
+    r'/([\w-]+)/user/([^/?#]+)(?:/post/([^/?#]+))?',
+  );
+
+  static PawchiveLink? tryParse(String url) {
+    final match = _pattern.firstMatch(url);
+    if (match == null) return null;
+    return PawchiveLink(
+      service: match.group(1)!,
+      user: Uri.decodeComponent(match.group(2)!),
+      post: match.group(3),
+    );
+  }
+}
+
+/// What `/search_hash/{sha256}` found: the posts holding the file and how
+/// many Discord messages do (Pawress doesn't show Discord servers).
+class HashLookup {
+  const HashLookup({
+    required this.hash,
+    this.posts = const [],
+    this.discordCount = 0,
+    this.mime,
+    this.size,
+  });
+
+  final String hash;
+  final List<Post> posts;
+  final int discordCount;
+  final String? mime;
+  final int? size;
+
+  factory HashLookup.fromJson(Map<String, dynamic> json, [String hash = '']) =>
+      HashLookup(
+        hash: _optStr(json['hash']) ?? hash,
+        posts: [
+          for (final item in (json['posts'] as List? ?? const []))
+            if (item is Map<String, dynamic>) Post.fromJson(item),
+        ],
+        discordCount: (json['discord_posts'] as List? ?? const []).length,
+        mime: _optStr(json['mime']),
+        size: json['size'] == null ? null : _int(json['size']),
+      );
+}
+
 class Fancard {
   const Fancard({required this.file, this.price, this.added});
 

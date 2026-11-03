@@ -7,10 +7,12 @@ import '../core/models.dart';
 import 'app_scope.dart';
 import 'creator_page.dart';
 import 'post_card.dart';
+import 'tag_page.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
-/// Finds artists by name and posts by text.
+/// Finds artists by name, posts by text, and tags (the site's popular tags
+/// filtered on the device, or any tag typed in).
 ///
 /// Artist search filters Pawchive's full creator list on the device; the
 /// list (~16 MB) is downloaded the first time this page needs it per
@@ -24,7 +26,7 @@ class SearchPage extends StatefulWidget {
 
 class _SearchPageState extends State<SearchPage>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabs = TabController(length: 2, vsync: this);
+  late final TabController _tabs = TabController(length: 3, vsync: this);
   final _field = TextEditingController();
   Timer? _debounce;
   String _query = '';
@@ -103,6 +105,7 @@ class _SearchPageState extends State<SearchPage>
         tabs: const [
           Tab(text: 'Artists'),
           Tab(text: 'Posts'),
+          Tab(text: 'Tags'),
         ],
       ),
     ),
@@ -125,6 +128,7 @@ class _SearchPageState extends State<SearchPage>
                   title: 'No posts match "$_query"',
                 ),
               ),
+        _TagResults(query: _query),
       ],
     ),
   );
@@ -212,6 +216,122 @@ class _ArtistResults extends StatelessWidget {
           itemCount: results.length,
           separatorBuilder: (_, _) => const Divider(),
           itemBuilder: (context, index) => ArtistTile(results[index]),
+        );
+      },
+    );
+  }
+}
+
+/// The site's popular tags (loaded when this tab first opens), filtered by
+/// the query, under a shortcut to the posts with exactly the typed tag.
+class _TagResults extends StatefulWidget {
+  const _TagResults({required this.query});
+
+  final String query;
+
+  @override
+  State<_TagResults> createState() => _TagResultsState();
+}
+
+class _TagResultsState extends State<_TagResults>
+    with AutomaticKeepAliveClientMixin {
+  late Future<List<CreatorTag>> _tags = AppScope.read(context).popularTags();
+
+  @override
+  bool get wantKeepAlive => true;
+
+  String get _tag {
+    final query = widget.query.trim();
+    return query.startsWith('#') ? query.substring(1).trim() : query;
+  }
+
+  List<CreatorTag> _match(List<CreatorTag> all) {
+    final q = _tag.toLowerCase();
+    if (q.isEmpty) return all;
+    final starts = <CreatorTag>[];
+    final contains = <CreatorTag>[];
+    for (final tag in all) {
+      final name = tag.tag.toLowerCase();
+      if (name.startsWith(q)) {
+        starts.add(tag);
+      } else if (name.contains(q)) {
+        contains.add(tag);
+      }
+    }
+    // Popularity order within each group, as the site lists them.
+    return [...starts, ...contains];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    final tag = _tag;
+    return FutureBuilder<List<CreatorTag>>(
+      future: _tags,
+      builder: (context, snapshot) {
+        final matches = snapshot.hasData
+            ? _match(snapshot.data!)
+            : const <CreatorTag>[];
+        final header = <Widget>[
+          if (tag.isNotEmpty)
+            ListTile(
+              contentPadding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+              leading: const CircleAvatar(
+                backgroundColor: pawPink,
+                foregroundColor: pawOutline,
+                child: Icon(Icons.tag_rounded),
+              ),
+              title: Text(
+                'Posts tagged #$tag',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              subtitle: Text(
+                'From every artist',
+                style: TextStyle(color: ink(.5)),
+              ),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => openTag(context, tag),
+            ),
+          if (snapshot.hasError)
+            StatusView(
+              icon: Icons.cloud_off_rounded,
+              title: 'Could not load popular tags',
+              body: '${snapshot.error}',
+              action: 'Try again',
+              onAction: () =>
+                  setState(() => _tags = AppScope.read(context).popularTags()),
+            )
+          else if (!snapshot.hasData)
+            const Padding(
+              padding: EdgeInsets.all(32),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (matches.isNotEmpty)
+            SectionLabel(
+              tag.isEmpty ? 'Popular tags' : 'Popular tags like this',
+            )
+          else if (tag.isEmpty)
+            const StatusView(icon: Icons.tag_rounded, title: 'No tags'),
+        ];
+        return BackToTop(
+          child: ListView.builder(
+            padding: const EdgeInsets.only(bottom: 96),
+            itemCount: header.length + matches.length,
+            itemBuilder: (context, index) {
+              if (index < header.length) return header[index];
+              final item = matches[index - header.length];
+              return ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                leading: Icon(Icons.tag_rounded, color: ink(.5)),
+                title: Text(item.tag),
+                trailing: Text(
+                  '${compactCount(item.postCount)} posts',
+                  style: TextStyle(color: ink(.5), fontSize: 13),
+                ),
+                onTap: () => openTag(context, item.tag),
+              );
+            },
+          ),
         );
       },
     );

@@ -42,6 +42,7 @@ applies.
 | `GET /{service}/user/{id}/fancards` | Fanbox only. `[{id, user_id, file_id, price, hash, ext, mime, size, added, ...}]` with no `path`; see Quirks. |
 | `GET /{service}/user/{id}/post/{post}/comments` | `[{id, parent_id, commenter_name, content, published}]` |
 | `GET /creators` | Every creator, about 16 MB. Only used by artist search, once per session. |
+| `GET /search_hash/{sha256}` | Hash lookup. `{hash, posts, discord_posts}`: `posts` are post objects with a short `content`, archived `file`s (with `node`) and `attachments`; `discord_posts` is a list or `null`. An unknown hash is a **404** with body `{}`. The schema also lists `mime`, `size`, `ext` and dates, which the live response leaves out. |
 | `GET /account/favorites?type=artist` | Needs the session cookie (401 otherwise). |
 | `GET /account/favorites?type=post` | The account's favorite posts, read as posts (`id`, `user`, `service`, ...). Needs the session cookie. Not checked against a live account; the schema only lists creator fields. |
 | `POST`/`DELETE /favorites/post/{service}/{creator}/{post}` | Like / unlike a post. Needs the session cookie. |
@@ -54,6 +55,9 @@ Web pages Pawress scrapes (`https://pawchive.pw`, not the API):
 | `/posts/popular?date=&period=&o=` | 50 `article.post-card` per page with `data-id`, `data-service`, `data-user`, a `post-card__header` title, a `/thumbnail/data{path}` image, `<time datetime="YYYY-MM-DD HH:MM:SS">` and "N favorites". No params means the last 24 hours. `period=day` takes any date; `week` and `month` only work with the start date the page itself links to in `#daily`, `#weekly` and `#monthly` (a week started 2026-10-27 for 2026-11-02, a month starts on the 1st). Other dates return no posts. |
 | `/{service}/user/{id}/community[/{channel}]?o=` | Patreon community chats; see Quirks. |
 | `/{service}/user/{id}/recommended` | "Similar artists": up to 50 `a.user-card` with `data-id`, `data-service` and `div.user-card__name`. No favorites or dates. |
+| `/posts/tags` | Popular tags, about 2000, most used first: `<article><a href="/posts?tag=..."><span>{tag}</span><span>{count}</span></a></article>` in `#tag-container`. |
+| `/posts?tag=&o=` | Posts with a tag, newest first, as the same `article.post-card`s as the popular page (no favorites), 50 per page with "Showing 1 - 50 of N". |
+| `/posts/random`, `/artists/random` | A **302** to a random `/{service}/user/{id}/post/{post}` or `/{service}/user/{id}`. Pawress reads `Location` without following it. |
 | `POST`/`DELETE /favorites/creator/{service}/{id}` | Needs the session cookie. |
 
 ## Quirks
@@ -109,5 +113,9 @@ Web pages Pawress scrapes (`https://pawchive.pw`, not the API):
   author. `cmsg__text` holds the HTML, followed by `a.cmsg__image` (full
   file `href`, thumbnail `img src`, sometimes Patreon's CDN) and
   `a.cmsg__embed` link previews.
+- **Tag search isn't in the API.** `/api/v1/posts?tag=` returns the plain
+  recent posts (the parameter is ignored), and `/api/v1/posts/tags`,
+  `/api/v1/posts/random` and `/api/v1/artists/random` are 404s, so the web
+  pages above are used (`parseTagPage`, `taggedPosts`, `randomPost`).
 - **Popular artists** have no endpoint either; `/artists` on the site sorts
   the same `/creators` data that Pawress sorts on the device.

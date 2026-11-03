@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:chewie/chewie.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
@@ -37,7 +38,8 @@ class MediaViewer extends StatefulWidget {
   State<MediaViewer> createState() => _MediaViewerState();
 }
 
-class _MediaViewerState extends State<MediaViewer> {
+class _MediaViewerState extends State<MediaViewer>
+    with SingleTickerProviderStateMixin {
   late List<MediaFile> _media = widget.post.media;
   late int _index = widget.initialIndex;
   final _centerKey = UniqueKey();
@@ -57,6 +59,22 @@ class _MediaViewerState extends State<MediaViewer> {
   bool _pressHover = false;
   Timer? _pressLinger;
   static const _pressSize = Size(176, 48);
+
+  /// Presses the touched image in while the finger stays on it, over the
+  /// time a long press takes, so holding visibly does something.
+  late final _hold = AnimationController(
+    vsync: this,
+    duration: kLongPressTimeout,
+    reverseDuration: const Duration(milliseconds: 260),
+  );
+  late final _holdScale = Tween<double>(begin: 1, end: .94).animate(
+    CurvedAnimation(
+      parent: _hold,
+      curve: Curves.easeIn,
+      reverseCurve: Curves.easeOutBack.flipped,
+    ),
+  );
+  int? _held;
 
   @override
   void initState() {
@@ -114,6 +132,7 @@ class _MediaViewerState extends State<MediaViewer> {
 
   @override
   void dispose() {
+    _hold.dispose();
     _pressLinger?.cancel();
     _scroll?.dispose();
     super.dispose();
@@ -163,7 +182,15 @@ class _MediaViewerState extends State<MediaViewer> {
     setState(() => _pressHover = hover);
   }
 
+  void _holdDown(int index) {
+    if (_held != index) setState(() => _held = index);
+    _hold.forward();
+  }
+
+  void _holdUp() => _hold.reverse();
+
   void _endPress(LongPressEndDetails details) {
+    _holdUp();
     if (_overPress(details.globalPosition)) {
       _pressDownload();
       return;
@@ -214,17 +241,24 @@ class _MediaViewerState extends State<MediaViewer> {
             if (_press != null) return _dismissPress();
             setState(() => _chrome = !_chrome);
           },
+          onLongPressDown: (_) => _holdDown(index),
+          onLongPressCancel: _holdUp,
           onLongPressStart: (_) => _startPress(index, itemContext),
           onLongPressMoveUpdate: _movePress,
           onLongPressEnd: _endPress,
-          child: _ImageItem(
-            key: ValueKey(item.path),
-            file: item,
-            gate: _gate,
-            loadFull: !_resolving && _visible.containsKey(index),
-            onZoom: (zoomed) {
-              if (zoomed != _zoomed) setState(() => _zoomed = zoomed);
-            },
+          child: ScaleTransition(
+            scale: index == _held
+                ? _holdScale
+                : const AlwaysStoppedAnimation(1.0),
+            child: _ImageItem(
+              key: ValueKey(item.path),
+              file: item,
+              gate: _gate,
+              loadFull: !_resolving && _visible.containsKey(index),
+              onZoom: (zoomed) {
+                if (zoomed != _zoomed) setState(() => _zoomed = zoomed);
+              },
+            ),
           ),
         ),
       );

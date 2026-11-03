@@ -12,10 +12,12 @@ import 'update_dialog.dart';
 import 'downloads.dart';
 import 'favorites_page.dart';
 import 'following_page.dart';
+import 'hash_lookup_page.dart';
 import 'login_page.dart';
 import 'notifications_page.dart';
 import 'popular.dart';
 import 'post_card.dart';
+import 'random_page.dart';
 import 'search_page.dart';
 import 'settings_page.dart';
 import 'theme.dart';
@@ -435,102 +437,126 @@ class Sidebar extends StatelessWidget {
       onOpen(builder);
     }
 
+    // Scrolls on short screens; the logo stays at the bottom otherwise.
     return Drawer(
       child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+        child: CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const _AccountAvatar(size: 44),
-                  const SizedBox(height: 12),
-                  Text(
-                    state.signedIn
-                        ? (state.accountName ?? 'Pawchive account')
-                        : 'Guest',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const _AccountAvatar(size: 44),
+                        const SizedBox(height: 12),
+                        Text(
+                          state.signedIn
+                              ? (state.accountName ?? 'Pawchive account')
+                              : 'Guest',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        Text(
+                          state.signedIn
+                              ? 'Signed in to Pawchive'
+                              : 'Follows are saved on this device',
+                          style: TextStyle(color: ink(.5)),
+                        ),
+                        const SizedBox(height: 12),
+                        GestureDetector(
+                          onTap: () => open((_) => const FollowingPage()),
+                          child: Text.rich(
+                            TextSpan(
+                              children: [
+                                TextSpan(
+                                  text: '${state.follows.length}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                TextSpan(
+                                  text: ' Following',
+                                  style: TextStyle(color: ink(.55)),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  Text(
-                    state.signedIn
-                        ? 'Signed in to Pawchive'
-                        : 'Follows are saved on this device',
-                    style: TextStyle(color: ink(.5)),
+                  const Divider(),
+                  _SidebarItem(
+                    icon: Icons.person_outline_rounded,
+                    label: state.signedIn ? 'Account' : 'Sign in',
+                    onTap: () => state.signedIn
+                        ? open((_) => const SettingsPage())
+                        : open((_) => const LoginPage()),
                   ),
-                  const SizedBox(height: 12),
-                  GestureDetector(
+                  _SidebarItem(
+                    icon: Icons.people_outline_rounded,
+                    label: 'Following',
                     onTap: () => open((_) => const FollowingPage()),
-                    child: Text.rich(
-                      TextSpan(
-                        children: [
-                          TextSpan(
-                            text: '${state.follows.length}',
-                            style: const TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                          TextSpan(
-                            text: ' Following',
-                            style: TextStyle(color: ink(.55)),
-                          ),
-                        ],
-                      ),
+                  ),
+                  _SidebarItem(
+                    icon: Icons.favorite_border_rounded,
+                    label: 'Favorites',
+                    onTap: () => open((_) => const FavoritesPage()),
+                  ),
+                  _SidebarItem(
+                    icon: Icons.notifications_none_rounded,
+                    label: 'Notifications',
+                    badge: state.unreadNotices,
+                    onTap: () => open((_) => const NotificationsPage()),
+                  ),
+                  _SidebarItem(
+                    icon: Icons.search_rounded,
+                    label: 'Explore',
+                    onTap: () => open((_) => const SearchPage()),
+                  ),
+                  _SidebarItem(
+                    icon: Icons.shuffle_rounded,
+                    label: 'Random',
+                    onTap: () => open((_) => const RandomPage()),
+                  ),
+                  _SidebarItem(
+                    icon: Icons.fingerprint_rounded,
+                    label: 'Hash lookup',
+                    onTap: () => open((_) => const HashLookupPage()),
+                  ),
+                  ListenableBuilder(
+                    listenable: state.downloads,
+                    builder: (context, _) => _SidebarItem(
+                      icon: Icons.download_rounded,
+                      label: 'Downloads',
+                      badge: state.downloads.active,
+                      onTap: () => open((_) => const DownloadsPage()),
                     ),
+                  ),
+                  const Divider(),
+                  _SidebarItem(
+                    icon: Icons.settings_outlined,
+                    label: 'Settings',
+                    onTap: () => open((_) => const SettingsPage()),
                   ),
                 ],
               ),
             ),
-            const Divider(),
-            _SidebarItem(
-              icon: Icons.person_outline_rounded,
-              label: state.signedIn ? 'Account' : 'Sign in',
-              onTap: () => state.signedIn
-                  ? open((_) => const SettingsPage())
-                  : open((_) => const LoginPage()),
-            ),
-            _SidebarItem(
-              icon: Icons.people_outline_rounded,
-              label: 'Following',
-              onTap: () => open((_) => const FollowingPage()),
-            ),
-            _SidebarItem(
-              icon: Icons.favorite_border_rounded,
-              label: 'Favorites',
-              onTap: () => open((_) => const FavoritesPage()),
-            ),
-            _SidebarItem(
-              icon: Icons.notifications_none_rounded,
-              label: 'Notifications',
-              badge: state.unreadNotices,
-              onTap: () => open((_) => const NotificationsPage()),
-            ),
-            _SidebarItem(
-              icon: Icons.search_rounded,
-              label: 'Explore',
-              onTap: () => open((_) => const SearchPage()),
-            ),
-            ListenableBuilder(
-              listenable: state.downloads,
-              builder: (context, _) => _SidebarItem(
-                icon: Icons.download_rounded,
-                label: 'Downloads',
-                badge: state.downloads.active,
-                onTap: () => open((_) => const DownloadsPage()),
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Align(
+                alignment: Alignment.bottomLeft,
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Image.asset(logoAsset, height: 22),
+                ),
               ),
-            ),
-            const Divider(),
-            _SidebarItem(
-              icon: Icons.settings_outlined,
-              label: 'Settings',
-              onTap: () => open((_) => const SettingsPage()),
-            ),
-            const Spacer(),
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: Image.asset(logoAsset, height: 22),
             ),
           ],
         ),

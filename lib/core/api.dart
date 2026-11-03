@@ -52,9 +52,11 @@ class PawchiveApi {
     String method,
     Uri uri, {
     Map<String, String>? headers,
+    bool followRedirects = true,
   }) async {
     final request = http.Request(method, uri)
-      ..headers.addAll(headers ?? _headers);
+      ..headers.addAll(headers ?? _headers)
+      ..followRedirects = followRedirects;
     final http.Response response;
     try {
       response = await http.Response.fromStream(
@@ -216,6 +218,60 @@ class PawchiveApi {
     }
   }
 
+  /// The site's most used tags, most used first (about 2000), read from the
+  /// `/posts/tags` web page; the API has no tag list.
+  Future<List<CreatorTag>> popularTags() async =>
+      parseTagPage(await _html('/posts/tags'));
+
+  /// Posts with [tag] across the site, newest first, read from the
+  /// `/posts?tag=` web page: the API's `/posts` ignores `tag`.
+  Future<List<Post>> taggedPosts(String tag, {int offset = 0}) async =>
+      parsePopularPage(
+        await _html('/posts', {
+          'tag': tag,
+          'o': offset == 0 ? null : '$offset',
+        }),
+      ).posts;
+
+  /// The posts holding the file with this SHA-256, or null when Pawchive
+  /// has no such file (a 404).
+  Future<HashLookup?> searchHash(String sha256) async {
+    try {
+      final json = await _get('/search_hash/${sha256.toLowerCase()}');
+      return HashLookup.fromJson(
+        json is Map<String, dynamic> ? json : const {},
+        sha256,
+      );
+    } on ApiException catch (e) {
+      if (e.status == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// A random post, from where the site's `/posts/random` redirects.
+  Future<PawchiveLink> randomPost() => _random('/posts/random');
+
+  /// A random artist, from where the site's `/artists/random` redirects.
+  /// Only the id is known; the name comes from the profile.
+  Future<Creator> randomCreator() async {
+    final link = await _random('/artists/random');
+    return Creator(id: link.user, service: link.service, name: link.user);
+  }
+
+  Future<PawchiveLink> _random(String path) async {
+    final response = await _send(
+      'GET',
+      _uri(path, null, siteUrl),
+      headers: {..._headers, 'Accept': 'text/html'},
+      followRedirects: false,
+    );
+    final link = PawchiveLink.tryParse(response.headers['location'] ?? '');
+    if (link == null) {
+      throw const ApiException('Pawchive did not pick anything. Try again.');
+    }
+    return link;
+  }
+
   /// Read from the creator's "similar artists" web page.
   Future<List<Creator>> recommendedCreators(String service, String id) async =>
       parseCreatorCards(await _html('/$service/user/$id/recommended'));
@@ -371,6 +427,18 @@ PopularPage parsePopularPage(String html) {
   }
   return PopularPage(posts, ranges);
 }
+
+final _tagCard = RegExp(
+  r'<article>\s*<a href="/posts\?tag=[^"]*">\s*<span>(.*?)</span>\s*'
+  r'<span>(\d+)</span>',
+  dotAll: true,
+);
+
+@visibleForTesting
+List<CreatorTag> parseTagPage(String html) => [
+  for (final card in _tagCard.allMatches(html))
+    CreatorTag(_text(card.group(1)!), int.parse(card.group(2)!)),
+];
 
 final _creatorCard = RegExp(
   r'<a\s+href="[^"]*"\s+class="user-card[^"]*"\s+data-id="([^"]*)"\s+'
