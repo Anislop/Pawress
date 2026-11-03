@@ -35,6 +35,7 @@ class _CreatorPageState extends State<CreatorPage>
     vsync: this,
   );
   Future<List<Creator>>? _links;
+  final _nested = GlobalKey<NestedScrollViewState>();
 
   /// The community's newest page, read with its channel list.
   CommunityPage? _community;
@@ -101,6 +102,11 @@ class _CreatorPageState extends State<CreatorPage>
     final c = _creator;
     final tabBar = TabBar(
       controller: _tabs,
+      onTap: (index) {
+        if (index == _tabs.index && !_tabs.indexIsChanging) {
+          scrollNestedToTop(_nested.currentState);
+        }
+      },
       isScrollable: true,
       tabAlignment: TabAlignment.start,
       tabs: [for (final label in _tabLabels) Tab(text: label)],
@@ -111,6 +117,7 @@ class _CreatorPageState extends State<CreatorPage>
         _bannerHeight + _ProfileHeader.height + tabBar.preferredSize.height;
     return Scaffold(
       body: NestedScrollView(
+        key: _nested,
         headerSliverBuilder: (context, scrolled) => [
           SliverOverlapAbsorber(
             handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
@@ -120,9 +127,12 @@ class _CreatorPageState extends State<CreatorPage>
               expandedHeight: expanded,
               backgroundColor: canvas,
               title: scrolled
-                  ? Text(
-                      c.name,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
+                  ? GestureDetector(
+                      onTap: () => scrollNestedToTop(_nested.currentState),
+                      child: Text(
+                        c.name,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
                     )
                   : null,
               flexibleSpace: FlexibleSpaceBar(
@@ -180,16 +190,20 @@ class _CreatorPageState extends State<CreatorPage>
                 ),
               ),
               actions: [
-                PopupMenuButton<String>(
-                  onSelected: (value) => openExternal(value),
+                PopupMenuButton<VoidCallback>(
+                  onSelected: (action) => action(),
                   itemBuilder: (_) => [
                     PopupMenuItem(
-                      value: c.originalUrl,
+                      value: () => openExternal(c.originalUrl),
                       child: Text('Open on ${c.site.label}'),
                     ),
                     PopupMenuItem(
-                      value: c.pawchiveUrl,
+                      value: () => openExternal(c.pawchiveUrl),
                       child: const Text('Open on Pawchive'),
+                    ),
+                    PopupMenuItem(
+                      value: () => copyLink(context, c.pawchiveUrl),
+                      child: const Text('Copy link'),
                     ),
                   ],
                 ),

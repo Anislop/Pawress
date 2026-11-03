@@ -49,6 +49,12 @@ class _SearchPageState extends State<SearchPage>
     );
   }
 
+  void _clear() {
+    _debounce?.cancel();
+    _field.clear();
+    _search('');
+  }
+
   void _search(String query) {
     if (query == _query) return;
     final api = AppScope.read(context).api;
@@ -69,17 +75,27 @@ class _SearchPageState extends State<SearchPage>
       titleSpacing: 0,
       title: Padding(
         padding: const EdgeInsets.only(right: 12),
-        child: TextField(
-          controller: _field,
-          autofocus: true,
-          textInputAction: TextInputAction.search,
-          decoration: const InputDecoration(
-            hintText: 'Search Pawchive',
-            prefixIcon: Icon(Icons.search_rounded),
-            isDense: true,
+        child: ListenableBuilder(
+          listenable: _field,
+          builder: (context, _) => TextField(
+            controller: _field,
+            autofocus: true,
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              hintText: 'Search Pawchive',
+              prefixIcon: const Icon(Icons.search_rounded),
+              suffixIcon: _field.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear',
+                      icon: const Icon(Icons.close_rounded),
+                      onPressed: _clear,
+                    ),
+              isDense: true,
+            ),
+            onChanged: _changed,
+            onSubmitted: (value) => _search(value.trim()),
           ),
-          onChanged: _changed,
-          onSubmitted: (value) => _search(value.trim()),
         ),
       ),
       bottom: TabBar(

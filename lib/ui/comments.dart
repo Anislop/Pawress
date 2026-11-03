@@ -73,12 +73,15 @@ class CommentList extends StatelessWidget {
           child: Text('No comments.', style: TextStyle(color: ink(.5))),
         );
       }
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (final (:comment, :depth) in threadComments(list))
-            _CommentRow(comment: comment, depth: depth.clamp(0, _maxDepth)),
-        ],
+      // Holding a comment selects its text for copying.
+      return SelectionArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final (:comment, :depth) in threadComments(list))
+              _CommentRow(comment: comment, depth: depth.clamp(0, _maxDepth)),
+          ],
+        ),
       );
     },
   );

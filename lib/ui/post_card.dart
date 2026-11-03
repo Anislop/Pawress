@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/models.dart';
 import 'app_scope.dart';
 import 'autoplay.dart';
 import 'comments.dart';
 import 'creator_page.dart';
+import 'downloads.dart';
 import 'media_viewer.dart';
 import 'poll.dart';
 import 'post_page.dart';
@@ -12,7 +14,7 @@ import 'theme.dart';
 import 'widgets.dart';
 
 /// A post in a feed, laid out like a post on X: avatar column, name line,
-/// text, then a media grid.
+/// text, then a media grid. Holding it opens [showPostMenu].
 class PostCard extends StatelessWidget {
   const PostCard(this.post, {super.key});
 
@@ -25,6 +27,7 @@ class PostCard extends StatelessWidget {
     final others = post.files.length - media.length;
     return InkWell(
       onTap: () => openPost(context, post),
+      onLongPress: () => showPostMenu(context, post),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
         child: Row(
@@ -126,6 +129,7 @@ class PostActions extends StatelessWidget {
           color: liked ? pawPinkLight : ink(.6),
           onTap: () {
             final first = state.likes.isEmpty && !liked;
+            HapticFeedback.lightImpact();
             state.toggleLike(post);
             if (first) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -146,7 +150,10 @@ class PostActions extends StatelessWidget {
               : Icons.favorite_border_rounded,
           color: favorite ? pawPink : ink(.6),
           label: post.favorites == null ? null : compactCount(post.favorites!),
-          onTap: () => state.toggleFavorite(post),
+          onTap: () {
+            HapticFeedback.lightImpact();
+            state.toggleFavorite(post);
+          },
         ),
         const Spacer(),
         if (attachments > 0) ...[
@@ -439,6 +446,87 @@ class _Label extends StatelessWidget {
         color: Colors.white,
       ),
     ),
+  );
+}
+
+/// Quick actions for a post held in a feed: its artist, like, favorite,
+/// download, copy and open.
+Future<void> showPostMenu(BuildContext context, Post post) {
+  HapticFeedback.mediumImpact();
+  final state = AppScope.read(context);
+  final creator =
+      state.directory.known(post.creatorKey) ??
+      Creator(id: post.user, service: post.service, name: post.user);
+  final text = plainText(post.content);
+  return showModalBottomSheet<void>(
+    context: context,
+    useSafeArea: true,
+    showDragHandle: true,
+    backgroundColor: canvas,
+    builder: (sheet) {
+      final liked = state.isLiked(post);
+      final favorite = state.isFavorite(post);
+      Widget item(IconData icon, String label, VoidCallback onTap) => ListTile(
+        leading: Icon(icon),
+        title: Text(label),
+        onTap: () {
+          Navigator.of(sheet).pop();
+          onTap();
+        },
+      );
+      return SingleChildScrollView(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            item(
+              Icons.person_outline_rounded,
+              'View ${creator.name}',
+              () => openCreator(context, creator),
+            ),
+            item(
+              liked ? Icons.thumb_up_alt_rounded : Icons.thumb_up_alt_outlined,
+              liked ? 'Remove like' : 'Like',
+              () => state.toggleLike(post),
+            ),
+            item(
+              favorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+              favorite ? 'Remove from favorites' : 'Favorite',
+              () => state.toggleFavorite(post),
+            ),
+            if (post.files.isNotEmpty)
+              item(
+                Icons.download_rounded,
+                post.files.length == 1
+                    ? 'Download file'
+                    : 'Download all ${post.files.length} files',
+                () => downloadFiles(context, post, post.files),
+              ),
+            item(
+              Icons.link_rounded,
+              'Copy link',
+              () => copyLink(context, post.url),
+            ),
+            if (text.isNotEmpty)
+              item(Icons.content_copy_rounded, 'Copy text', () {
+                Clipboard.setData(
+                  ClipboardData(
+                    text: post.title.isEmpty ? text : '${post.title}\n\n$text',
+                  ),
+                );
+                ScaffoldMessenger.of(context)
+                  ..hideCurrentSnackBar()
+                  ..showSnackBar(const SnackBar(content: Text('Text copied')));
+              }),
+            item(
+              Icons.open_in_new_rounded,
+              'Open on Pawchive',
+              () => openExternal(post.url),
+            ),
+          ],
+        ),
+      );
+    },
   );
 }
 

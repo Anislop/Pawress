@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_widget_from_html_core/flutter_widget_from_html_core.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -152,7 +153,39 @@ Future<bool> openExternal(String url) {
   return launchUrl(uri, mode: LaunchMode.externalApplication);
 }
 
-/// "now", "5m", "3h", "2d", then a date, like X's timestamps.
+/// Copies [url] to the clipboard and says so.
+Future<void> copyLink(BuildContext context, String url) async {
+  final messenger = ScaffoldMessenger.of(context);
+  await Clipboard.setData(ClipboardData(text: url));
+  messenger
+    ..hideCurrentSnackBar()
+    ..showSnackBar(const SnackBar(content: Text('Link copied')));
+}
+
+/// Scrolls a [NestedScrollView] back to the top with its header showing,
+/// as tapping X's current tab does. NestedScrollView moves its inner lists
+/// together, so every tab returns to the top. From far down it jumps close
+/// first, so the animation doesn't build (and load images for) every row in
+/// between.
+void scrollNestedToTop(NestedScrollViewState? nested) {
+  if (nested == null) return;
+  final inner = nested.innerController;
+  if (inner.hasClients) {
+    final position = inner.positions.reduce(
+      (a, b) => a.pixels >= b.pixels ? a : b,
+    );
+    final near = position.viewportDimension * 1.5;
+    if (position.pixels > near) position.jumpTo(near);
+  }
+  final outer = nested.outerController;
+  if (!outer.hasClients) return;
+  outer.animateTo(
+    0,
+    duration: const Duration(milliseconds: 380),
+    curve: Curves.easeOutCubic,
+  );
+}
+
 /// 950, 1.2K, 34K, 1.5M.
 String compactCount(int count) {
   if (count < 1000) return '$count';
