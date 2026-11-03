@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:workmanager/workmanager.dart';
@@ -24,14 +25,15 @@ class UpdateChecker {
   /// Pause between creators to stay well under Pawchive's rate limits.
   static const _spacing = Duration(milliseconds: 350);
 
-  /// Checks every follow and returns the new notices, newest first. A
-  /// creator's first check only records what exists, so following someone
-  /// never notifies about their back catalogue.
+  /// Checks every follow whose bell isn't off and returns the new notices,
+  /// newest first. A creator's first check only records what exists, so
+  /// following someone never notifies about their back catalogue.
   Future<List<UpdateNotice>> check() async {
     final follows = await store.follows();
     final updated = <String, Follow>{};
     final found = <UpdateNotice>[];
     for (final follow in follows) {
+      if (follow.notify == NotifyLevel.off) continue;
       try {
         final result = await _checkOne(follow);
         updated[follow.key] = result.follow;
@@ -119,6 +121,19 @@ class UpdateChecker {
   }
 }
 
+/// The notices whose creator's bell is set to push, for Android
+/// notifications; the rest stay in the app.
+List<UpdateNotice> pushable(List<UpdateNotice> notices, List<Follow> follows) {
+  final push = {
+    for (final follow in follows)
+      if (follow.notify == NotifyLevel.push) follow.key,
+  };
+  return [
+    for (final notice in notices)
+      if (push.contains(notice.creator.key)) notice,
+  ];
+}
+
 /// System notifications for new posts.
 class Notifier {
   Notifier._();
@@ -136,6 +151,21 @@ class Notifier {
     importance: Importance.defaultImportance,
     priority: Priority.defaultPriority,
   );
+
+  /// The same notifications as pop-up banners. Android fixes a channel's
+  /// importance when it is created, so banners need a channel of their own.
+  static const _bannerChannel = AndroidNotificationDetails(
+    'artist_updates_banner',
+    'Artist updates (pop-up)',
+    channelDescription: 'New posts from artists you follow, as banners',
+    importance: Importance.high,
+    priority: Priority.high,
+  );
+
+  static AndroidFlutterLocalNotificationsPlugin? get _android => _plugin
+      .resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin
+      >();
 
   static Future<void> init() async {
     if (_ready) return;
@@ -166,15 +196,35 @@ class Notifier {
   }
 
   static Future<bool> requestPermission() async =>
-      await _plugin
-          .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin
-          >()
-          ?.requestNotificationsPermission() ??
-      false;
+      await _android?.requestNotificationsPermission() ?? false;
 
-  /// One notification per creator, replacing that creator's previous one.
-  static Future<void> show(List<UpdateNotice> notices) async {
+  /// Whether Android lets Pawress post notifications at all.
+  static Future<bool> permitted() async {
+    await init();
+    return await _android?.areNotificationsEnabled() ?? false;
+  }
+
+  /// Opens Pawress in Android's notification settings, where sound,
+  /// vibration and the lock screen are chosen. Returns false if it could
+  /// not.
+  static Future<bool> openSystemSettings() async {
+    try {
+      return await const MethodChannel('pawress/updater')
+              .invokeMethod<bool>('notificationSettings') ??
+          false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
+  /// One notification per creator, replacing that creator's previous one;
+  /// with [banners], they pop up over the screen.
+  static Future<void> show(
+    List<UpdateNotice> notices, {
+    bool banners = false,
+  }) async {
     await init();
     final byCreator = <String, List<UpdateNotice>>{};
     for (final notice in notices) {
@@ -192,7 +242,9 @@ class Notifier {
         id: creator.key.hashCode & 0x7fffffff,
         title: title,
         body: body,
-        notificationDetails: const NotificationDetails(android: _channel),
+        notificationDetails: NotificationDetails(
+          android: banners ? _bannerChannel : _channel,
+        ),
         payload: creator.key,
       );
     }
@@ -240,8 +292,13 @@ void backgroundDispatcher() {
     if (!settings.notificationsEnabled) return true;
     final api = PawchiveApi(session: await store.session());
     try {
-      final notices = await UpdateChecker(api, store).check();
-      if (notices.isNotEmpty) await Notifier.show(notices);
+      final notices = pushable(
+        await UpdateChecker(api, store).check(),
+        await store.follows(),
+      );
+      if (notices.isNotEmpty) {
+        await Notifier.show(notices, banners: settings.notifyBanners);
+      }
       return true;
     } catch (_) {
       return false;

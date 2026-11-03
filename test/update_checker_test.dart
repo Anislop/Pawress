@@ -110,4 +110,32 @@ void main() {
     await pending;
     expect(await store.follows(), isEmpty);
   });
+
+  test('a follow with its bell off is not checked at all', () async {
+    final follow = (await store.follows()).single;
+    await store.saveFollows([follow.copyWith(notify: NotifyLevel.off)]);
+    expect(await checker.check(), isEmpty);
+    expect(server.postRequests, 0);
+    expect((await store.follows()).single.seenPostIds, isEmpty);
+  });
+
+  test('only push follows become Android notifications', () {
+    UpdateNotice notice(String id) => UpdateNotice(
+      id: 'patreon/$id/1',
+      creator: Creator(id: id, service: 'patreon', name: id),
+      postId: '1',
+      postTitle: '',
+      at: DateTime.utc(2026),
+    );
+    Follow follow(String id, NotifyLevel level) => Follow(
+      creator: Creator(id: id, service: 'patreon', name: id),
+      followedAt: DateTime.utc(2026),
+      notify: level,
+    );
+    final shown = pushable(
+      [notice('1'), notice('2'), notice('3')],
+      [follow('1', NotifyLevel.push), follow('2', NotifyLevel.inApp)],
+    );
+    expect(shown.map((n) => n.creator.id), ['1']);
+  });
 }

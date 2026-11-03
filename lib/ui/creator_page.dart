@@ -5,6 +5,7 @@ import '../core/feeds.dart';
 import '../core/models.dart';
 import 'app_scope.dart';
 import 'community_page.dart';
+import 'notify_bell.dart';
 import 'post_card.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -375,6 +376,10 @@ class _ProfileHeader extends StatelessWidget {
                     icon: const Icon(Icons.group_add_outlined, size: 20),
                   ),
                   const SizedBox(width: 8),
+                  if (AppScope.of(context).isFollowing(c.key)) ...[
+                    NotifyBell(creator: c),
+                    const SizedBox(width: 8),
+                  ],
                   FollowButton(creator: c),
                 ],
               ),

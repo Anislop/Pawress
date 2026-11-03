@@ -133,9 +133,10 @@ class _ExportDialogState extends State<_ExportDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${_count(state.follows.length, 'follow')} and '
-              '${_count(state.favorites.length, 'liked post')} go into a JSON '
-              'file in a folder you choose.',
+              '${_count(state.follows.length, 'follow')}, '
+              '${_count(state.favorites.length, 'favorite')} and '
+              '${_count(state.likes.length, 'like')} go into a JSON file in '
+              'a folder you choose.',
               style: TextStyle(color: ink(.75)),
             ),
             if (state.signedIn) ...[
@@ -234,7 +235,7 @@ class _ImportDialogState extends State<_ImportDialog> {
       final added = await state.importBackup(widget.backup, account: account);
       navigator.pop(
         'Added ${_count(added.follows, 'follow')} and '
-        '${_count(added.favorites, 'liked post')}'
+        '${_count(added.favorites, 'favorite')}'
         '${account == null ? '' : ', and signed in'}.',
       );
     } on BackupException catch (e) {
@@ -260,8 +261,9 @@ class _ImportDialogState extends State<_ImportDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${_count(backup.follows.length, 'follow')} and '
-              '${_count(backup.favorites.length, 'liked post')}'
+              '${_count(backup.follows.length, 'follow')}, '
+              '${_count(backup.favorites.length, 'favorite')} and '
+              '${_count(backup.likes.length, 'like')}'
               '${backup.exportedAt == null ? '' : ' from ${longDate(backup.exportedAt)}'}. '
               'Ones you already have are kept as they are.',
               style: TextStyle(color: ink(.75)),

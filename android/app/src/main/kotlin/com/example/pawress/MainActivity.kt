@@ -3,7 +3,9 @@ package com.example.pawress
 import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -19,7 +21,8 @@ import java.util.concurrent.Executors
  * Hosts the `pawress/updater` channel used by lib/core/app_update.dart: the
  * installed version, and downloading a GitHub release APK into the package
  * installer once it is checked to be a newer build of this app signed with
- * the same key.
+ * the same key. It also opens the app's page in Android's notification
+ * settings for lib/core/updates.dart.
  */
 class MainActivity : FlutterActivity() {
     private val executor = Executors.newSingleThreadExecutor()
@@ -45,7 +48,23 @@ class MainActivity : FlutterActivity() {
                 result.success(mapOf("name" to (info.versionName ?: ""), "build" to versionCode(info)))
             }
             "installUpdate" -> installUpdate(call, result)
+            "notificationSettings" -> result.success(openNotificationSettings())
             else -> result.notImplemented()
+        }
+    }
+
+    private fun openNotificationSettings(): Boolean {
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+        } else {
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+        }
+        return try {
+            startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            true
+        } catch (_: Exception) {
+            false
         }
     }
 

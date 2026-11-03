@@ -87,8 +87,9 @@ class PostCard extends StatelessWidget {
   }
 }
 
-/// Comments, like (with the count when the popular page gave one) and the
-/// attachment count, under a post.
+/// Comments, thumbs up (a private like that tunes For You), favorite (with
+/// the count when the popular page gave one) and the attachment count,
+/// under a post.
 class PostActions extends StatelessWidget {
   const PostActions({
     super.key,
@@ -106,7 +107,8 @@ class PostActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
-    final liked = state.isFavorite(post);
+    final liked = state.isLiked(post);
+    final favorite = state.isFavorite(post);
     return Row(
       children: [
         _ActionButton(
@@ -117,9 +119,32 @@ class PostActions extends StatelessWidget {
         ),
         const SizedBox(width: 12),
         _ActionButton(
-          tooltip: liked ? 'Unlike' : 'Like',
-          icon: liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-          color: liked ? pawPink : ink(.6),
+          tooltip: liked ? 'Remove like' : 'Like',
+          icon: liked
+              ? Icons.thumb_up_alt_rounded
+              : Icons.thumb_up_alt_outlined,
+          color: liked ? pawPinkLight : ink(.6),
+          onTap: () {
+            final first = state.likes.isEmpty && !liked;
+            state.toggleLike(post);
+            if (first) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Liked. For You will show more posts like this.',
+                  ),
+                ),
+              );
+            }
+          },
+        ),
+        const SizedBox(width: 12),
+        _ActionButton(
+          tooltip: favorite ? 'Remove from favorites' : 'Favorite',
+          icon: favorite
+              ? Icons.favorite_rounded
+              : Icons.favorite_border_rounded,
+          color: favorite ? pawPink : ink(.6),
           label: post.favorites == null ? null : compactCount(post.favorites!),
           onTap: () => state.toggleFavorite(post),
         ),

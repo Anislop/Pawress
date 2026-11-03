@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/models.dart';
 import 'app_scope.dart';
+import 'notification_settings.dart';
 import 'post_card.dart';
 import 'post_page.dart';
 import 'theme.dart';
@@ -49,6 +50,15 @@ class NotificationsPage extends StatelessWidget {
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
             ),
+          IconButton(
+            tooltip: 'Notification settings',
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const NotificationSettingsPage(),
+              ),
+            ),
+          ),
           PopupMenuButton<String>(
             onSelected: (value) => switch (value) {
               'read' => state.markAllNoticesRead(),

@@ -701,6 +701,7 @@ class Follow {
     this.seenUpdated,
     this.unread = 0,
     this.synced = false,
+    this.notify = NotifyLevel.push,
   });
 
   final Creator creator;
@@ -721,6 +722,10 @@ class Follow {
   /// so its absence there means it was removed on the website.
   final bool synced;
 
+  /// What a new post from this creator does, chosen with the bell on their
+  /// profile.
+  final NotifyLevel notify;
+
   String get key => creator.key;
 
   Follow copyWith({
@@ -729,6 +734,7 @@ class Follow {
     String? seenUpdated,
     int? unread,
     bool? synced,
+    NotifyLevel? notify,
   }) => Follow(
     creator: creator ?? this.creator,
     followedAt: followedAt,
@@ -736,6 +742,7 @@ class Follow {
     seenUpdated: seenUpdated ?? this.seenUpdated,
     unread: unread ?? this.unread,
     synced: synced ?? this.synced,
+    notify: notify ?? this.notify,
   );
 
   factory Follow.fromJson(Map<String, dynamic> json) => Follow(
@@ -745,6 +752,8 @@ class Follow {
     seenUpdated: _optStr(json['seenUpdated']),
     unread: _int(json['unread']),
     synced: _bool(json['synced']),
+    // Follows saved before the bell existed kept notifying.
+    notify: NotifyLevel.values.asNameMap()[json['notify']] ?? NotifyLevel.push,
   );
 
   Map<String, dynamic> toJson() => {
@@ -754,6 +763,69 @@ class Follow {
     'seenUpdated': seenUpdated,
     'unread': unread,
     'synced': synced,
+    'notify': notify.name,
+  };
+}
+
+/// What a followed creator's new posts do, like the bell on an X profile.
+enum NotifyLevel {
+  /// Not checked at all, so it costs no requests.
+  off('Off', 'No notifications from this artist'),
+
+  /// Listed in Notifications with an unread badge, and an in-app alert
+  /// while Pawress is open.
+  inApp('In app', 'Notifications tab and in-app alerts only'),
+
+  /// Also an Android notification, with a pop-up banner when that is on.
+  push('Push', 'Android notifications, plus everything in app');
+
+  const NotifyLevel(this.label, this.description);
+
+  final String label;
+  final String description;
+}
+
+/// A thumbs up on a post. It never leaves the device (Pawchive has no
+/// likes); it only teaches For You what to show more of, so it keeps just
+/// what the ranking reads.
+class Like {
+  const Like({
+    required this.key,
+    required this.service,
+    required this.user,
+    required this.likedAt,
+    this.tags = const [],
+  });
+
+  Like.of(Post post, this.likedAt)
+    : key = post.key,
+      service = post.service,
+      user = post.user,
+      tags = post.tags;
+
+  /// The post's [Post.key].
+  final String key;
+  final String service;
+  final String user;
+  final List<String> tags;
+  final DateTime likedAt;
+
+  String get creatorKey => '$service/$user';
+
+  factory Like.fromJson(Map<String, dynamic> json) => Like(
+    key: _str(json['key']),
+    service: _str(json['service']),
+    user: _str(json['user']),
+    tags: parseTags(json['tags']),
+    likedAt: parseDate(json['likedAt']) ?? DateTime.now().toUtc(),
+  );
+
+  Map<String, dynamic> toJson() => {
+    'key': key,
+    'service': service,
+    'user': user,
+    'tags': tags,
+    'likedAt': likedAt.toIso8601String(),
   };
 }
 

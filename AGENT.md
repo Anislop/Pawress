@@ -33,16 +33,17 @@ lib/
   main.dart            App root: splash -> onboarding -> home, revealed from the bottom
   core/                No widgets (except updates.dart's Flutter binding); safe for the background isolate
     config.dart        Hosts, user agent, page size
-    models.dart        Creator, Post, MediaFile, Poll, Favorite, Follow, Community*, UpdateNotice, ... and JSON parsing; threadComments
+    models.dart        Creator, Post, MediaFile, Poll, Favorite, Like, Follow + NotifyLevel, Community*, UpdateNotice, ... and JSON parsing; threadComments
     api.dart           PawchiveApi (all HTTP); scrapers for DMs, popular posts, similar artists, community chats
     store.dart         Store: SharedPreferencesAsync + secure storage (session cookie); AppSettings
     backup.dart        Backup file (follows, likes, sign-in sealed with AES-GCM + PBKDF2), mergeFollows / mergeFavorites
-    feeds.dart         Feed (paged ChangeNotifier), OffsetFeed, PopularFeed, ForYouFeed + rankForYou, FollowingFeed (k-way merge)
+    feeds.dart         Feed (paged ChangeNotifier), OffsetFeed, PopularFeed, FollowingFeed (k-way merge)
+    for_you.dart       ForYouFeed: Taste (follows, likes, favorites), pickSources, takeBest, blendForYou
     creators.dart      CreatorDirectory: cached, throttled profile lookups (feed posts carry only ids)
-    updates.dart       UpdateChecker, Notifier (local notifications), BackgroundUpdates (WorkManager)
+    updates.dart       UpdateChecker, pushable, Notifier (local notifications, banner channel), BackgroundUpdates (WorkManager)
     downloads.dart     DownloadManager queue (2 at once, 1 s apart) writing to a SAF folder via DownloadTarget
     app_update.dart    AppUpdater: GitHub releases check (AppRelease.newest) and install via the pawress/updater channel
-    app_state.dart     AppState: settings, account, follows, liked posts, notices, favorites sync, backup import/export
+    app_state.dart     AppState: settings, account, follows + bells, likes, favorites, notices + in-app alerts, sync, backup
   ui/
     app_scope.dart     AppScope.of(context) / AppScope.read(context) give AppState
     theme.dart         Palette (from assets), buildTheme(), BrandMark, SectionLabel
@@ -51,7 +52,8 @@ lib/
     onboarding.dart    Four parallax slides (art lags, text leads), notification permission, optional sign-in
     home.dart          HomeScreen (floating SliverAppBar + For You / Following / Popular tabs, Popular's bottom bar) and Sidebar (drawer)
     popular.dart       PopularTab: popular artists (from /creators, sorted on device) and PopularFeed posts
-    post_card.dart     X-style post row, PostActions (comments / like), MediaGrid, openPost/openCreator/openViewer helpers
+    post_card.dart     X-style post row, PostActions (comments / thumbs up / favorite), MediaGrid, openPost/openCreator/openViewer helpers
+    notify_bell.dart   NotifyBell (X-style bell beside Following) and showNotifySheet
     comments.dart      CommentList (threaded, left-aligned) and showComments (bottom sheet)
     poll.dart          PollView: a Patreon poll's results as bars
     autoplay.dart      FeedAutoplay (picks the one playing tile) and AutoplayMedia (muted video / GIF tile)
@@ -62,14 +64,18 @@ lib/
     creator_page.dart  Artist profile (banner, site, links, Follow, Similar artists sheet) + tabs; FollowButton, ArtistTile
     community_page.dart CommunityChatPage: a Patreon community channel as a chat log, newest at the bottom
     backup.dart        Export / import dialogs (SAF folder and file pickers)
-    favorites_page.dart, following_page.dart, notifications_page.dart, search_page.dart, settings_page.dart, login_page.dart
+    settings_cards.dart BooruPlus-style settings panels (SettingsGroup, SettingsSwitchCard, SettingsChoiceCard, ...)
+    settings_page.dart  Settings, laid out like BooruPlus's but applied instantly (no save button)
+    notification_settings.dart  X-style notification preferences and per-artist bells
+    favorites_page.dart, following_page.dart, notifications_page.dart, search_page.dart, login_page.dart
 test/
-  core_test.dart            Parsing, URLs, ranking, entity decoding, polls, fancards, comment threads, DM / popular / similar-artist / community scraping
+  for_you_test.dart         Taste, source sampling, blending and ForYouFeed over fake fetches
+  core_test.dart            Parsing, URLs, entity decoding, polls, fancards, comment threads, DM / popular / similar-artist / community scraping
   backup_test.dart          Backup encoding and sealing, merges, AppState likes and their account sync
   update_checker_test.dart  UpdateChecker against a fake Pawchive (MockClient + in-memory prefs)
   downloads_test.dart       DownloadManager: URL resolution, naming, failure and retry (in-memory target)
   app_update_test.dart      Release picking, nightly notes, AppUpdater over a mocked channel and GitHub
-android/app/src/main/kotlin/.../MainActivity.kt   pawress/updater channel: appVersion, installUpdate
+android/app/src/main/kotlin/.../MainActivity.kt   pawress/updater channel: appVersion, installUpdate, notificationSettings
 .github/workflows/          ci.yml (PRs, and called by CD) and cd.yml (nightly / tagged releases)
 docs/pawchive-api.md        API reference and quirks
 ```
@@ -85,7 +91,10 @@ docs/pawchive-api.md        API reference and quirks
 - **Full files.** `MediaFile.fullUrl` gives `temp_url` or the file host URL,
   or null when the post must be fetched again; the viewer does that.
   Thumbnails exist only for images.
-- **Favorites (likes).** The heart on a post (`PostActions`) stores the whole
+- **Likes (thumbs up).** The thumbs up on a post stores a `Like` (post key,
+  creator, tags, time) on the device only; Pawchive has no likes. It only
+  feeds For You, and Settings can reset them. They go into backups.
+- **Favorites.** The heart on a post (`PostActions`) stores the whole
   `Post` locally (`Favorite`, without `temp_url`s, which expire) and, when
   signed in, syncs with the account's favorite posts the same way follows do
   (`Favorite.synced`). The Favorites page in the sidebar lists them with no
@@ -108,6 +117,15 @@ docs/pawchive-api.md        API reference and quirks
   with Pawchive favorite creators (`AppState.syncFavorites`): `Follow.synced`
   marks follows already seen on the account, so a missing synced follow means
   it was removed on the website.
+- **Notification levels.** Each `Follow` has a `NotifyLevel` (the bell on
+  the profile and in Following): `push` (Android notification, on the
+  `artist_updates_banner` high-importance channel when
+  `AppSettings.notifyBanners` is on, otherwise `artist_updates`), `inApp`
+  (Notifications page, badge and an in-app alert snackbar) or `off` (not
+  checked, no requests). New follows start at `AppSettings.defaultNotify`.
+  Turning a bell on from off clears `seenPostIds` so the next check only
+  records a baseline. HomeScreen polls the store each minute while
+  resumed (`AppState.pollNotices`, no network) to raise in-app alerts.
 - **Notifications.** `UpdateChecker.check()` polls each follow's profile
   `updated` stamp, fetches the first page only when it changed, and treats
   post ids not in `Follow.seenPostIds` as new. A creator's first check only
@@ -116,9 +134,15 @@ docs/pawchive-api.md        API reference and quirks
   minimum). The background isolate builds its own `Store` and `PawchiveApi`,
   so keep `core/` free of UI dependencies. The app reloads follows and notices
   from the store on resume.
-- **For You.** The API has no recommendations. Each page of `/posts` is
-  reordered by `rankForYou` (recency, plus boosts for followed creators and
-  sites, without long runs from one creator).
+- **For You.** The API has no recommendations; `ForYouFeed` builds them.
+  `Taste` weighs creators, sites and tags from follows, thumbs-up likes
+  (half-life 30 days) and favorites (60 days). Each page takes
+  `ForYouMix.followingShare` (Settings) of its 30 posts from followed and
+  liked artists, whose first pages are fetched a few at a time
+  (`pickSources`: weighted random by affinity and recent activity; at most
+  6 creator requests per page), and the rest from `/posts`. Both pools are
+  ranked by `Taste.score` (freshness + taste + jitter), capped per creator,
+  blended and spread so no artist fills consecutive rows.
 - **Popular.** There's no API for it. Popular posts are scraped from
   `/posts/popular` (`parsePopularPage`); those posts only carry a thumbnail
   path, so their file is marked preview-only and the viewer and downloads
@@ -208,6 +232,7 @@ scheduled.
 
 - iOS and other platforms (only `android/` exists).
 - Blocked tags and a light theme.
+- A "not interested" signal for For You (only positive likes exist).
 - Downloads run only while the app is open (no foreground service or
   download notification).
 - Older popular ranges (the page's "prev" links are parsed into
