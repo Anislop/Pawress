@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pawress/core/api.dart';
-import 'package:pawress/core/feeds.dart';
 import 'package:pawress/core/models.dart';
 
 // Shapes copied from live Pawchive responses (trimmed).
@@ -38,9 +37,6 @@ const _recentPost = {
   'file': {},
   'attachments': [],
 };
-
-Post _post(String id, String user, {String service = 'patreon'}) =>
-    Post(id: id, user: user, service: service, title: '');
 
 Follow _follow(String user, {String service = 'patreon'}) => Follow(
   creator: Creator(id: user, service: service, name: user),
@@ -138,26 +134,29 @@ void main() {
     expect(copy.seenPostIds, ['1', '2']);
     expect(copy.unread, 3);
     expect(copy.synced, isTrue);
+    expect(copy.notify, NotifyLevel.push);
   });
 
-  group('rankForYou', () {
-    test(
-      'keeps recency without follows but breaks up runs from one creator',
-      () {
-        final ranked = rankForYou([
-          _post('1', 'a'),
-          _post('2', 'a'),
-          _post('3', 'b'),
-        ], []);
-        expect(ranked.map((p) => p.id), ['1', '3', '2']);
-      },
-    );
+  test('Follow keeps its bell, and older saves default to push', () {
+    final follow = _follow('7').copyWith(notify: NotifyLevel.inApp);
+    expect(Follow.fromJson(follow.toJson()).notify, NotifyLevel.inApp);
+    final old = follow.toJson()..remove('notify');
+    expect(Follow.fromJson(old).notify, NotifyLevel.push);
+  });
 
-    test('lifts followed creators toward the top', () {
-      final page = [for (var i = 0; i < 20; i++) _post('$i', 'u$i')];
-      final ranked = rankForYou(page, [_follow('u15')]);
-      expect(ranked.first.id, '15');
-    });
+  test('Like keeps what For You reads', () {
+    final post = Post(
+      id: '5',
+      user: '9',
+      service: 'fanbox',
+      title: 'Hi',
+      tags: const ['Cats'],
+    );
+    final like = Like.fromJson(Like.of(post, DateTime.utc(2026, 11)).toJson());
+    expect(like.key, post.key);
+    expect(like.creatorKey, 'fanbox/9');
+    expect(like.tags, ['Cats']);
+    expect(like.likedAt, DateTime.utc(2026, 11));
   });
 
   test('parseDirectMessages reads DM cards from the DMs page', () {

@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../core/feeds.dart';
+import '../core/for_you.dart';
+import '../core/models.dart';
 import '../core/updates.dart';
 import 'app_scope.dart';
 import 'creator_page.dart';
@@ -44,11 +46,15 @@ class _HomeScreenState extends State<HomeScreen>
   StreamSubscription<String>? _taps;
   String _followSignature = '';
 
+  /// Looks for notices the background check wrote while the app is open.
+  Timer? _poll;
+  static const _pollInterval = Duration(minutes: 1);
+
   @override
   void initState() {
     super.initState();
     final state = AppScope.read(context);
-    _forYou = ForYouFeed(state.api, () => state.follows);
+    _forYou = ForYouFeed(state.api, state.forYouSignals);
     _following = FollowingFeed(state.api, () => state.follows);
     _followSignature = _signature();
     state.addListener(_onState);
@@ -58,6 +64,15 @@ class _HomeScreenState extends State<HomeScreen>
       if (key != null) _openFromNotification(key);
     });
     unawaited(_checkForUpdate());
+    _startPolling();
+  }
+
+  void _startPolling() {
+    _poll?.cancel();
+    _poll = Timer.periodic(
+      _pollInterval,
+      (_) => AppScope.read(context).pollNotices(),
+    );
   }
 
   /// Looks for a newer release once per launch, unless turned off in
@@ -78,6 +93,7 @@ class _HomeScreenState extends State<HomeScreen>
     AppScope.read(context).removeListener(_onState);
     WidgetsBinding.instance.removeObserver(this);
     _taps?.cancel();
+    _poll?.cancel();
     _tabs.dispose();
     _forYou.dispose();
     _following.dispose();
@@ -87,7 +103,12 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // The background check may have found posts while the app was away.
-    if (state == AppLifecycleState.resumed) AppScope.read(context).reload();
+    if (state == AppLifecycleState.resumed) {
+      AppScope.read(context).reload(alert: true);
+      _startPolling();
+    } else if (state == AppLifecycleState.paused) {
+      _poll?.cancel();
+    }
   }
 
   void _onTab() {
@@ -116,11 +137,63 @@ class _HomeScreenState extends State<HomeScreen>
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(message)));
     }
+    final alert = state.takeAlert();
+    if (alert != null && mounted) _showAlert(alert);
     final signature = _signature();
     if (signature != _followSignature) {
       _followSignature = signature;
       if (_following.posts.isNotEmpty || _following.done) _following.refresh();
     }
+  }
+
+  /// An in-app banner for new posts, X style: the artist, what they posted
+  /// and a way to see it.
+  void _showAlert(List<UpdateNotice> notices) {
+    final first = notices.first;
+    final creators = {for (final notice in notices) notice.creator.key};
+    final title = creators.length > 1
+        ? '${notices.length} new posts from artists you follow'
+        : notices.length == 1
+        ? 'New post from ${first.creator.name}'
+        : '${notices.length} new posts from ${first.creator.name}';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 6),
+        content: Row(
+          children: [
+            CreatorAvatar(first.creator, size: 32),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  if (notices.length == 1 && first.postTitle.isNotEmpty)
+                    Text(
+                      first.postTitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        action: SnackBarAction(
+          label: 'View',
+          onPressed: () => creators.length == 1
+              ? _openFromNotification(first.creator.key)
+              : _push((_) => const NotificationsPage()),
+        ),
+      ),
+    );
   }
 
   void _openFromNotification(String key) {

@@ -120,59 +120,6 @@ class PopularFeed extends Feed {
   }
 }
 
-/// Site-wide recent posts, reordered page by page toward the creators and
-/// sites the user follows. The API has no recommendation endpoint, so this
-/// is the whole "algorithm": recency, a boost for followed creators, a
-/// smaller one for followed sites, and no long runs from one creator.
-class ForYouFeed extends OffsetFeed {
-  ForYouFeed(PawchiveApi api, this._follows)
-    : super((offset) => api.recentPosts(offset: offset));
-
-  final List<Follow> Function() _follows;
-
-  @override
-  List<Post> transform(List<Post> page) => rankForYou(page, _follows());
-}
-
-@visibleForTesting
-List<Post> rankForYou(List<Post> page, List<Follow> follows) {
-  if (follows.isEmpty || page.isEmpty) return _spread(page);
-  final followed = {for (final follow in follows) follow.key};
-  final services = <String, int>{};
-  for (final follow in follows) {
-    services[follow.creator.service] =
-        (services[follow.creator.service] ?? 0) + 1;
-  }
-  // Each point is worth one position in the page: a followed creator's post
-  // can climb 20 places, a post from a followed site up to 6.
-  double score(int index, Post post) =>
-      -index.toDouble() +
-      (followed.contains(post.creatorKey) ? 20 : 0) +
-      6 * (services[post.service] ?? 0) / follows.length;
-  final scored =
-      [
-        for (final (index, post) in page.indexed)
-          (post, index, score(index, post)),
-      ]..sort((a, b) {
-        final byScore = b.$3.compareTo(a.$3);
-        return byScore != 0 ? byScore : a.$2.compareTo(b.$2);
-      });
-  return _spread([for (final entry in scored) entry.$1]);
-}
-
-/// Moves posts so one creator does not fill several rows in a row, keeping
-/// the order otherwise.
-List<Post> _spread(List<Post> posts) {
-  final pending = [...posts];
-  final result = <Post>[];
-  while (pending.isNotEmpty) {
-    final last = result.isEmpty ? null : result.last.creatorKey;
-    final index = pending.indexWhere((post) => post.creatorKey != last);
-    result.add(pending.removeAt(index < 0 ? 0 : index));
-  }
-  return result;
-}
-
 /// Every followed creator's posts merged newest first. Each creator is
 /// paged on its own and only fetched again once its loaded posts have all
 /// been placed.

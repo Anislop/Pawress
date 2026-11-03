@@ -22,12 +22,16 @@ class Backup {
   const Backup({
     required this.follows,
     required this.favorites,
+    this.likes = const [],
     this.credentials,
     this.exportedAt,
   });
 
   final List<Follow> follows;
   final List<Favorite> favorites;
+
+  /// Thumbs-up likes, which teach For You.
+  final List<Like> likes;
   final SealedCredentials? credentials;
   final DateTime? exportedAt;
 
@@ -40,6 +44,7 @@ class Backup {
     'exportedAt': (exportedAt ?? DateTime.now().toUtc()).toIso8601String(),
     'follows': [for (final follow in follows) follow.toJson()],
     'favorites': [for (final favorite in favorites) favorite.toJson()],
+    'likes': [for (final like in likes) like.toJson()],
     if (credentials != null) 'credentials': credentials!.toJson(),
   });
 
@@ -68,6 +73,7 @@ class Backup {
       return Backup(
         follows: list('follows', Follow.fromJson),
         favorites: list('favorites', Favorite.fromJson),
+        likes: list('likes', Like.fromJson),
         credentials: credentials is Map<String, dynamic>
             ? SealedCredentials.fromJson(credentials)
             : null,
@@ -185,7 +191,11 @@ List<Follow> mergeFollows(List<Follow> current, List<Follow> imported) {
     ...current,
     for (final follow in imported)
       if (have.add(follow.key))
-        Follow(creator: follow.creator, followedAt: follow.followedAt),
+        Follow(
+          creator: follow.creator,
+          followedAt: follow.followedAt,
+          notify: follow.notify,
+        ),
   ];
 }
 
@@ -197,4 +207,15 @@ List<Favorite> mergeFavorites(List<Favorite> current, List<Favorite> imported) {
     for (final favorite in imported)
       if (have.add(favorite.key)) favorite.copyWith(synced: false),
   ]..sort((a, b) => b.favoritedAt.compareTo(a.favoritedAt));
+}
+
+/// [current] plus the thumbs-up likes in [imported] it doesn't have, newest
+/// first.
+List<Like> mergeLikes(List<Like> current, List<Like> imported) {
+  final have = {for (final like in current) like.key};
+  return [
+    ...current,
+    for (final like in imported)
+      if (have.add(like.key)) like,
+  ]..sort((a, b) => b.likedAt.compareTo(a.likedAt));
 }

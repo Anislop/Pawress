@@ -7,11 +7,30 @@ import 'models.dart';
 
 enum ThemeChoice { plum, amoled }
 
+/// How much of For You comes from followed artists.
+enum ForYouMix {
+  following('Following', .85),
+  balanced('Balanced', .65),
+  discover('Discover', .4);
+
+  const ForYouMix(this.label, this.followingShare);
+
+  final String label;
+
+  /// The share of each page taken from followed and liked artists; the rest
+  /// is site-wide recent posts ranked by taste.
+  final double followingShare;
+}
+
 class AppSettings {
   const AppSettings({
     this.theme = ThemeChoice.plum,
     this.notificationsEnabled = true,
+    this.notifyBanners = true,
+    this.inAppAlerts = true,
+    this.defaultNotify = NotifyLevel.push,
     this.checkIntervalMinutes = 60,
+    this.forYouMix = ForYouMix.balanced,
     this.autoplayVideos = true,
     this.downloadFolderUri,
     this.downloadFolderName,
@@ -23,6 +42,19 @@ class AppSettings {
 
   /// Background checks for followed artists' new posts.
   final bool notificationsEnabled;
+
+  /// Push notifications pop up over other apps (Android's high importance
+  /// channel) instead of only appearing in the shade.
+  final bool notifyBanners;
+
+  /// A banner inside Pawress when the background check finds new posts
+  /// while the app is open.
+  final bool inAppAlerts;
+
+  /// The bell setting a new follow starts with.
+  final NotifyLevel defaultNotify;
+
+  final ForYouMix forYouMix;
 
   /// How often Android runs the background check; 15 is its minimum.
   final int checkIntervalMinutes;
@@ -43,7 +75,11 @@ class AppSettings {
   AppSettings copyWith({
     ThemeChoice? theme,
     bool? notificationsEnabled,
+    bool? notifyBanners,
+    bool? inAppAlerts,
+    NotifyLevel? defaultNotify,
     int? checkIntervalMinutes,
+    ForYouMix? forYouMix,
     bool? autoplayVideos,
     ({String uri, String name})? downloadFolder,
     bool clearDownloadFolder = false,
@@ -52,7 +88,11 @@ class AppSettings {
   }) => AppSettings(
     theme: theme ?? this.theme,
     notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
+    notifyBanners: notifyBanners ?? this.notifyBanners,
+    inAppAlerts: inAppAlerts ?? this.inAppAlerts,
+    defaultNotify: defaultNotify ?? this.defaultNotify,
     checkIntervalMinutes: checkIntervalMinutes ?? this.checkIntervalMinutes,
+    forYouMix: forYouMix ?? this.forYouMix,
     autoplayVideos: autoplayVideos ?? this.autoplayVideos,
     downloadFolderUri: clearDownloadFolder
         ? null
@@ -67,7 +107,14 @@ class AppSettings {
   factory AppSettings.fromJson(Map<String, dynamic> json) => AppSettings(
     theme: ThemeChoice.values.asNameMap()[json['theme']] ?? ThemeChoice.plum,
     notificationsEnabled: json['notificationsEnabled'] as bool? ?? true,
+    notifyBanners: json['notifyBanners'] as bool? ?? true,
+    inAppAlerts: json['inAppAlerts'] as bool? ?? true,
+    defaultNotify:
+        NotifyLevel.values.asNameMap()[json['defaultNotify']] ??
+        NotifyLevel.push,
     checkIntervalMinutes: json['checkIntervalMinutes'] as int? ?? 60,
+    forYouMix:
+        ForYouMix.values.asNameMap()[json['forYouMix']] ?? ForYouMix.balanced,
     autoplayVideos: json['autoplayVideos'] as bool? ?? true,
     downloadFolderUri: json['downloadFolderUri'] as String?,
     downloadFolderName: json['downloadFolderName'] as String?,
@@ -78,7 +125,11 @@ class AppSettings {
   Map<String, dynamic> toJson() => {
     'theme': theme.name,
     'notificationsEnabled': notificationsEnabled,
+    'notifyBanners': notifyBanners,
+    'inAppAlerts': inAppAlerts,
+    'defaultNotify': defaultNotify.name,
     'checkIntervalMinutes': checkIntervalMinutes,
+    'forYouMix': forYouMix.name,
     'autoplayVideos': autoplayVideos,
     'downloadFolderUri': downloadFolderUri,
     'downloadFolderName': downloadFolderName,
@@ -102,12 +153,16 @@ class Store {
   static const _settings = 'settings';
   static const _follows = 'follows';
   static const _favorites = 'favorites';
+  static const _likes = 'likes';
   static const _notices = 'notices';
   static const _accountName = 'accountName';
   static const _session = 'session';
 
   /// The newest notices kept; older ones are dropped.
   static const maxNotices = 200;
+
+  /// The newest likes kept; older taste fades out of For You anyway.
+  static const maxLikes = 1000;
 
   Future<bool> onboarded() async => await _prefs.getBool(_onboarded) ?? false;
   Future<void> setOnboarded(bool value) => _prefs.setBool(_onboarded, value);
@@ -135,6 +190,13 @@ class Store {
   Future<void> saveFavorites(List<Favorite> favorites) => _prefs.setString(
     _favorites,
     jsonEncode([for (final favorite in favorites) favorite.toJson()]),
+  );
+
+  Future<List<Like>> likes() async => _list(_likes, Like.fromJson);
+
+  Future<void> saveLikes(List<Like> likes) => _prefs.setString(
+    _likes,
+    jsonEncode([for (final like in likes.take(maxLikes)) like.toJson()]),
   );
 
   Future<List<UpdateNotice>> notices() async =>

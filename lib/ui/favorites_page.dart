@@ -5,8 +5,8 @@ import 'post_card.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
-/// Every liked post, newest like first. Likes are kept on the device and,
-/// when signed in, synced with the account's favorite posts.
+/// Every favorited (hearted) post, newest first. Favorites are kept on the
+/// device and, when signed in, synced with the account's favorite posts.
 class FavoritesPage extends StatelessWidget {
   const FavoritesPage({super.key});
 

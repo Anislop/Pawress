@@ -175,5 +175,55 @@ void main() {
       expect(state.favorites.map((f) => f.key), ['fanbox/8/web']);
       expect(state.favorites.single.post.title, 'From web');
     });
+
+    test('a thumbs up is stored apart from favorites', () async {
+      final post = _like('5').post;
+      await state.toggleLike(post);
+      expect(state.isLiked(post), isTrue);
+      expect(state.isFavorite(post), isFalse);
+      expect((await state.store.likes()).single.key, post.key);
+      expect(state.forYouSignals().likes.single.creatorKey, 'patreon/7');
+      await state.toggleLike(post);
+      expect(await state.store.likes(), isEmpty);
+      expect(calls, isEmpty);
+    });
+
+    test('turning a bell back on records a new baseline', () async {
+      await state.importBackup(
+        Backup(
+          follows: [_follow('1').copyWith(notify: NotifyLevel.off)],
+          favorites: const [],
+        ),
+      );
+      // Imported follows keep their bell.
+      expect(state.follows.single.notify, NotifyLevel.off);
+      await state.store.saveFollows([
+        state.follows.single.copyWith(seenPostIds: ['old']),
+      ]);
+      await state.reload();
+      await state.setNotify('patreon/1', NotifyLevel.inApp);
+      final follow = (await state.store.follows()).single;
+      expect(follow.notify, NotifyLevel.inApp);
+      expect(follow.seenPostIds, isEmpty);
+    });
+  });
+
+  test('Backup carries likes and bells', () {
+    final like = Like(
+      key: 'patreon/7/1',
+      service: 'patreon',
+      user: '7',
+      likedAt: DateTime.utc(2026, 11),
+    );
+    final copy = Backup.decode(
+      Backup(
+        follows: [_follow('1').copyWith(notify: NotifyLevel.inApp)],
+        favorites: const [],
+        likes: [like],
+      ).encode(),
+    );
+    expect(copy.follows.single.notify, NotifyLevel.inApp);
+    expect(copy.likes.single.key, like.key);
+    expect(mergeLikes([like], copy.likes), hasLength(1));
   });
 }

@@ -7,6 +7,7 @@ import 'app_update.dart';
 import 'backup.dart';
 import 'creators.dart';
 import 'downloads.dart';
+import 'for_you.dart';
 import 'models.dart';
 import 'store.dart';
 import 'updates.dart';
@@ -41,13 +42,21 @@ class AppState extends ChangeNotifier {
   List<Follow> follows = [];
   List<Favorite> favorites = [];
   List<UpdateNotice> notices = [];
+
+  /// Thumbs-up likes, newest first; they only feed For You.
+  List<Like> likes = [];
   Set<String> _favoriteKeys = {};
+  Set<String> _likeKeys = {};
 
   /// A foreground update check is running.
   bool checking = false;
 
   /// Shown once by the home screen, e.g. after a session expired.
   String? message;
+
+  /// New posts the background check found while the app was open, shown
+  /// once by the home screen as an in-app alert.
+  List<UpdateNotice>? _alert;
 
   Future<List<Creator>>? _allCreators;
 
@@ -61,6 +70,7 @@ class AppState extends ChangeNotifier {
     accountName = await store.accountName();
     follows = await store.follows();
     _setFavorites(await store.favorites());
+    _setLikes(await store.likes());
     notices = await store.notices();
     directory.remember(follows.map((f) => f.creator));
     initialized = true;
@@ -69,11 +79,43 @@ class AppState extends ChangeNotifier {
     if (signedIn) unawaited(syncFavorites());
   }
 
-  /// Picks up follows and notices the background check wrote.
-  Future<void> reload() async {
+  /// Picks up follows and notices the background check wrote. With
+  /// [alert], notices that are new since the last load become an in-app
+  /// alert when that is turned on.
+  Future<void> reload({bool alert = false}) async {
+    final known = {for (final notice in notices) notice.id};
     follows = await store.follows();
     notices = await store.notices();
+    if (alert && settings.notificationsEnabled && settings.inAppAlerts) {
+      final levels = {for (final follow in follows) follow.key: follow.notify};
+      final fresh = [
+        for (final notice in notices)
+          if (!notice.read &&
+              !known.contains(notice.id) &&
+              (levels[notice.creator.key] ?? NotifyLevel.off) !=
+                  NotifyLevel.off)
+            notice,
+      ];
+      if (fresh.isNotEmpty) _alert = fresh;
+    }
     notifyListeners();
+  }
+
+  /// Reloads only when the stored notices changed, so the open app can look
+  /// for the background check's results cheaply.
+  Future<void> pollNotices() async {
+    final stored = await store.notices();
+    if (stored.length == notices.length &&
+        stored.firstOrNull?.id == notices.firstOrNull?.id) {
+      return;
+    }
+    await reload(alert: true);
+  }
+
+  List<UpdateNotice>? takeAlert() {
+    final alert = _alert;
+    _alert = null;
+    return alert;
   }
 
   Future<void> completeOnboarding() async {
@@ -97,7 +139,10 @@ class AppState extends ChangeNotifier {
 
   Future<void> _schedule() async {
     try {
-      await BackgroundUpdates.apply(settings, hasFollows: follows.isNotEmpty);
+      await BackgroundUpdates.apply(
+        settings,
+        hasFollows: follows.any((f) => f.notify != NotifyLevel.off),
+      );
     } catch (e) {
       debugPrint('Could not schedule background updates: $e');
     }
@@ -113,7 +158,11 @@ class AppState extends ChangeNotifier {
   Future<void> follow(Creator creator) async {
     if (isFollowing(creator.key)) return;
     follows = [
-      Follow(creator: creator, followedAt: DateTime.now().toUtc()),
+      Follow(
+        creator: creator,
+        followedAt: DateTime.now().toUtc(),
+        notify: settings.defaultNotify,
+      ),
       ...follows,
     ];
     await _saveFollows();
@@ -140,6 +189,27 @@ class AppState extends ChangeNotifier {
       }
     }
   }
+
+  /// Sets the bell for a followed creator. Coming back from off, posts
+  /// made meanwhile weren't checked, so the next check only records a new
+  /// baseline instead of reporting them all.
+  Future<void> setNotify(String key, NotifyLevel level) async {
+    final follow = followOf(key);
+    if (follow == null || follow.notify == level) return;
+    _replace(key, (f) => _withNotify(f, level));
+    await _saveFollows();
+  }
+
+  /// Sets every follow's bell at once.
+  Future<void> setNotifyAll(NotifyLevel level) async {
+    follows = [for (final f in follows) _withNotify(f, level)];
+    await _saveFollows();
+  }
+
+  static Follow _withNotify(Follow follow, NotifyLevel level) =>
+      follow.notify == NotifyLevel.off && level != NotifyLevel.off
+      ? follow.copyWith(notify: level, seenPostIds: const [])
+      : follow.copyWith(notify: level);
 
   /// Records a new follow's current posts so only later ones notify.
   Future<void> _baseline(String key) async {
@@ -222,7 +292,7 @@ class AppState extends ChangeNotifier {
     await _schedule();
   }
 
-  // Favorites (liked posts).
+  // Favorites (the heart), synced with the account's favorite posts.
 
   bool isFavorite(Post post) => _favoriteKeys.contains(post.key);
 
@@ -245,7 +315,7 @@ class AppState extends ChangeNotifier {
         ]);
         await _saveFavorites();
       } on ApiException catch (e) {
-        _say('Liked here, but not on your Pawchive account: ${e.message}');
+        _say('Favorited here, but not on your Pawchive account: ${e.message}');
       }
     }
   }
@@ -257,7 +327,9 @@ class AppState extends ChangeNotifier {
       try {
         await api.removeFavoritePost(post);
       } on ApiException catch (e) {
-        _say('Unliked here, but not on your Pawchive account: ${e.message}');
+        _say(
+          'Removed here, but not from your Pawchive favorites: ${e.message}',
+        );
       }
     }
   }
@@ -272,6 +344,39 @@ class AppState extends ChangeNotifier {
     await store.saveFavorites(favorites);
   }
 
+  // Likes (thumbs up).
+
+  bool isLiked(Post post) => _likeKeys.contains(post.key);
+
+  Future<void> toggleLike(Post post) async {
+    _setLikes(
+      isLiked(post)
+          ? likes.where((like) => like.key != post.key).toList()
+          : [Like.of(post, DateTime.now().toUtc()), ...likes],
+    );
+    notifyListeners();
+    await store.saveLikes(likes);
+  }
+
+  Future<void> clearLikes() async {
+    _setLikes([]);
+    notifyListeners();
+    await store.saveLikes(likes);
+  }
+
+  void _setLikes(List<Like> value) {
+    likes = value;
+    _likeKeys = {for (final like in value) like.key};
+  }
+
+  /// What For You learns from, read for each page.
+  ForYouSignals forYouSignals() => (
+    follows: follows,
+    likes: likes,
+    favorites: favorites,
+    followingShare: settings.forYouMix.followingShare,
+  );
+
   // Backup.
 
   /// Follows and likes, plus the sign-in sealed with [password] when one is
@@ -279,6 +384,7 @@ class AppState extends ChangeNotifier {
   Future<Backup> exportBackup({String? password}) async => Backup(
     follows: follows,
     favorites: favorites,
+    likes: likes,
     credentials: password == null || password.isEmpty || !signedIn
         ? null
         : await SealedCredentials.seal(
@@ -299,6 +405,8 @@ class AppState extends ChangeNotifier {
     final favoriteCount = favorites.length;
     follows = mergeFollows(follows, backup.follows);
     _setFavorites(mergeFavorites(favorites, backup.favorites));
+    _setLikes(mergeLikes(likes, backup.likes));
+    await store.saveLikes(likes);
     directory.remember(follows.map((f) => f.creator));
     await _saveFollows();
     await _saveFavorites();
@@ -414,7 +522,7 @@ class AppState extends ChangeNotifier {
       ]);
       await _saveFavorites();
     } on ApiException catch (e) {
-      if (!e.unauthorized) _say('Could not sync likes: ${e.message}');
+      if (!e.unauthorized) _say('Could not sync favorites: ${e.message}');
     }
   }
 

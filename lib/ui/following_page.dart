@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/models.dart';
 import 'app_scope.dart';
 import 'creator_page.dart';
+import 'notify_bell.dart';
 import 'post_card.dart';
 import 'search_page.dart';
 import 'theme.dart';
@@ -178,6 +179,8 @@ class _FollowTile extends StatelessWidget {
                 label: Text('${follow.unread} new'),
               ),
             ),
+          NotifyBell(creator: c),
+          const SizedBox(width: 6),
           FollowButton(creator: c, compact: true),
         ],
       ),
