@@ -171,18 +171,122 @@ void scrollNestedToTop(NestedScrollViewState? nested) {
   if (nested == null) return;
   final inner = nested.innerController;
   if (inner.hasClients) {
-    final position = inner.positions.reduce(
-      (a, b) => a.pixels >= b.pixels ? a : b,
+    _jumpNearTop(
+      inner.positions.reduce((a, b) => a.pixels >= b.pixels ? a : b),
     );
-    final near = position.viewportDimension * 1.5;
-    if (position.pixels > near) position.jumpTo(near);
   }
   final outer = nested.outerController;
   if (!outer.hasClients) return;
-  outer.animateTo(
-    0,
-    duration: const Duration(milliseconds: 380),
-    curve: Curves.easeOutCubic,
+  outer.animateTo(0, duration: _toTop, curve: Curves.easeOutCubic);
+}
+
+/// [scrollNestedToTop] for a plain scroll view.
+void scrollToTop(ScrollPosition position) {
+  if (!position.hasPixels) return;
+  _jumpNearTop(position);
+  position.animateTo(0, duration: _toTop, curve: Curves.easeOutCubic);
+}
+
+const _toTop = Duration(milliseconds: 380);
+
+void _jumpNearTop(ScrollPosition position) {
+  final near = position.viewportDimension * 1.5;
+  if (position.pixels > near) position.jumpTo(near);
+}
+
+/// An arrow over a vertical scroll view that shows once it's a couple of
+/// screens down and takes it back to the top (header included inside a
+/// [NestedScrollView]).
+class BackToTop extends StatefulWidget {
+  const BackToTop({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  State<BackToTop> createState() => _BackToTopState();
+}
+
+class _BackToTopState extends State<BackToTop> {
+  final _shown = ValueNotifier(false);
+  ScrollPosition? _position;
+
+  @override
+  void dispose() {
+    _shown.dispose();
+    super.dispose();
+  }
+
+  bool _onScroll(ScrollNotification notification) {
+    final metrics = notification.metrics;
+    if (notification.depth != 0 || metrics.axis != Axis.vertical) {
+      return false;
+    }
+    _position = notification.context
+        ?.findAncestorStateOfType<ScrollableState>()
+        ?.position;
+    _shown.value = metrics.pixels > metrics.viewportDimension * 2;
+    return false;
+  }
+
+  void _up() {
+    _shown.value = false;
+    final nested = context.findAncestorStateOfType<NestedScrollViewState>();
+    if (nested != null) return scrollNestedToTop(nested);
+    final position = _position;
+    if (position != null) scrollToTop(position);
+  }
+
+  @override
+  Widget build(BuildContext context) => Stack(
+    children: [
+      NotificationListener<ScrollNotification>(
+        onNotification: _onScroll,
+        child: widget.child,
+      ),
+      Positioned(
+        left: 0,
+        right: 0,
+        bottom: MediaQuery.paddingOf(context).bottom + 16,
+        child: Center(
+          child: ValueListenableBuilder<bool>(
+            valueListenable: _shown,
+            builder: (context, shown, child) => IgnorePointer(
+              ignoring: !shown,
+              child: AnimatedScale(
+                scale: shown ? 1 : .4,
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOutBack,
+                child: AnimatedOpacity(
+                  opacity: shown ? 1 : 0,
+                  duration: const Duration(milliseconds: 160),
+                  child: child,
+                ),
+              ),
+            ),
+            child: Material(
+              color: pawPink,
+              shape: const CircleBorder(),
+              elevation: 4,
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: _up,
+                child: const Tooltip(
+                  message: 'Back to top',
+                  child: Padding(
+                    padding: EdgeInsets.all(11),
+                    child: Icon(
+                      Icons.arrow_upward_rounded,
+                      color: pawOutline,
+                      size: 22,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ],
   );
 }
 
@@ -329,26 +433,28 @@ class _FeedViewState extends State<FeedView> {
     listenable: widget.feed,
     builder: (context, _) {
       final feed = widget.feed;
-      return RefreshIndicator(
-        onRefresh: feed.refresh,
-        edgeOffset: widget.overlapHandle == null ? 0 : 100,
-        child: NotificationListener<ScrollNotification>(
-          onNotification: _onScroll,
-          child: CustomScrollView(
-            key: PageStorageKey(feed),
-            physics: const AlwaysScrollableScrollPhysics(),
-            slivers: [
-              if (widget.overlapHandle != null)
-                SliverOverlapInjector(handle: widget.overlapHandle!),
-              ?widget.header,
-              SliverList.separated(
-                itemCount: feed.posts.length,
-                itemBuilder: (context, index) =>
-                    widget.itemBuilder(context, feed.posts[index]),
-                separatorBuilder: (_, _) => const Divider(),
-              ),
-              SliverToBoxAdapter(child: _footer(feed)),
-            ],
+      return BackToTop(
+        child: RefreshIndicator(
+          onRefresh: feed.refresh,
+          edgeOffset: widget.overlapHandle == null ? 0 : 100,
+          child: NotificationListener<ScrollNotification>(
+            onNotification: _onScroll,
+            child: CustomScrollView(
+              key: PageStorageKey(feed),
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                if (widget.overlapHandle != null)
+                  SliverOverlapInjector(handle: widget.overlapHandle!),
+                ?widget.header,
+                SliverList.separated(
+                  itemCount: feed.posts.length,
+                  itemBuilder: (context, index) =>
+                      widget.itemBuilder(context, feed.posts[index]),
+                  separatorBuilder: (_, _) => const Divider(),
+                ),
+                SliverToBoxAdapter(child: _footer(feed)),
+              ],
+            ),
           ),
         ),
       );

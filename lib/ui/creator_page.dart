@@ -5,13 +5,14 @@ import '../core/feeds.dart';
 import '../core/models.dart';
 import 'app_scope.dart';
 import 'community_page.dart';
+import 'creator_media.dart';
 import 'notify_bell.dart';
 import 'post_card.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
 /// An artist's profile: banner, original site, linked accounts and a Follow
-/// button, then tabs for posts, announcements, tags, DMs, (Patreon only)
+/// button, then tabs for posts, media, announcements, tags, DMs, (Patreon only)
 /// community chats and (Fanbox only) fancards.
 class CreatorPage extends StatefulWidget {
   const CreatorPage({super.key, required this.creator, this.initialTag});
@@ -42,6 +43,7 @@ class _CreatorPageState extends State<CreatorPage>
 
   List<String> get _tabLabels => [
     'Posts',
+    'Media',
     'Announcements',
     'Tags',
     'DMs',
@@ -242,6 +244,7 @@ class _CreatorPageState extends State<CreatorPage>
                       ),
               ),
             ),
+            CreatorMediaTab(creator: widget.creator),
             _FutureList<Announcement>(
               load: () =>
                   AppScope.read(context).api.announcements(c.service, c.id),

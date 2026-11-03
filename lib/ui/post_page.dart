@@ -8,6 +8,7 @@ import 'downloads.dart';
 import 'creator_page.dart';
 import 'poll.dart';
 import 'post_card.dart';
+import 'tag_page.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -85,6 +86,39 @@ class _PostPageState extends State<PostPage> {
         );
       }
     });
+  }
+
+  /// A post's tag can mean this artist's posts or everyone's.
+  Future<void> _openTag(Creator creator, String tag) async {
+    final everyone = await showModalBottomSheet<bool>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      backgroundColor: canvas,
+      builder: (sheet) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: CreatorAvatar(creator, size: 32),
+            title: Text('#$tag from ${creator.name}'),
+            onTap: () => Navigator.of(sheet).pop(false),
+          ),
+          ListTile(
+            leading: const Icon(Icons.public_rounded),
+            title: Text('#$tag from every artist'),
+            onTap: () => Navigator.of(sheet).pop(true),
+          ),
+          const SizedBox(height: 12),
+        ],
+      ),
+    );
+    if (everyone == null || !mounted) return;
+    if (everyone) return openTag(context, tag);
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CreatorPage(creator: creator, initialTag: tag),
+      ),
+    );
   }
 
   @override
@@ -247,12 +281,7 @@ class _PostPageState extends State<PostPage> {
                 for (final tag in post.tags)
                   ActionChip(
                     label: Text('#$tag'),
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) =>
-                            CreatorPage(creator: creator, initialTag: tag),
-                      ),
-                    ),
+                    onPressed: () => _openTag(creator, tag),
                   ),
               ],
             ),

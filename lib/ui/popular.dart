@@ -180,14 +180,16 @@ class _PopularTabState extends State<PopularTab>
             separatorBuilder: (_, _) => const Divider(),
           );
         }
-        return CustomScrollView(
-          key: const PageStorageKey('popular-artists'),
-          slivers: [
-            SliverOverlapInjector(handle: handle),
-            if (snapshot.hasData) SliverToBoxAdapter(child: _artistFilters()),
-            body,
-            const SliverToBoxAdapter(child: SizedBox(height: 96)),
-          ],
+        return BackToTop(
+          child: CustomScrollView(
+            key: const PageStorageKey('popular-artists'),
+            slivers: [
+              SliverOverlapInjector(handle: handle),
+              if (snapshot.hasData) SliverToBoxAdapter(child: _artistFilters()),
+              body,
+              const SliverToBoxAdapter(child: SizedBox(height: 96)),
+            ],
+          ),
         );
       },
     );

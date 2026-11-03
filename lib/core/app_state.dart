@@ -59,6 +59,7 @@ class AppState extends ChangeNotifier {
   List<UpdateNotice>? _alert;
 
   Future<List<Creator>>? _allCreators;
+  Future<List<CreatorTag>>? _popularTags;
 
   bool get signedIn => api.session != null;
   int get unreadNotices => notices.where((n) => !n.read).length;
@@ -534,6 +535,16 @@ class AppState extends ChangeNotifier {
     pending.catchError((Object _) {
       _allCreators = null;
       return <Creator>[];
+    });
+    return pending;
+  }
+
+  /// The site's popular tags, read once per session for Explore.
+  Future<List<CreatorTag>> popularTags() {
+    final pending = _popularTags ??= api.popularTags();
+    pending.catchError((Object _) {
+      _popularTags = null;
+      return <CreatorTag>[];
     });
     return pending;
   }

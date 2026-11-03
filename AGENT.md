@@ -33,8 +33,9 @@ lib/
   main.dart            App root: splash -> onboarding -> home, revealed from the bottom
   core/                No widgets (except updates.dart's Flutter binding); safe for the background isolate
     config.dart        Hosts, user agent, page size
-    models.dart        Creator, Post, MediaFile, Poll, Favorite, Like, Follow + NotifyLevel, Community*, UpdateNotice, ... and JSON parsing; threadComments
-    api.dart           PawchiveApi (all HTTP); scrapers for DMs, popular posts, similar artists, community chats
+    models.dart        Creator, Post, MediaFile, Poll, Favorite, Like, Follow + NotifyLevel, Community*, UpdateNotice, PawchiveLink, HashLookup, ... and JSON parsing; threadComments
+    api.dart           PawchiveApi (all HTTP); scrapers for DMs, popular posts, tags, tagged posts, similar artists, community chats; random redirects; hash lookup
+    file_hash.dart     sha256Hex (streamed, for hash lookup) and isSha256
     store.dart         Store: SharedPreferencesAsync + secure storage (session cookie); AppSettings
     backup.dart        Backup file (follows, likes, sign-in sealed with AES-GCM + PBKDF2), mergeFollows / mergeFavorites
     feeds.dart         Feed (paged ChangeNotifier), OffsetFeed, PopularFeed, FollowingFeed (k-way merge)
@@ -47,7 +48,7 @@ lib/
   ui/
     app_scope.dart     AppScope.of(context) / AppScope.read(context) give AppState
     theme.dart         Palette (from assets), buildTheme(), BrandMark, SectionLabel
-    widgets.dart       NetImage, CreatorAvatar, ServiceBadge, HtmlContent, FeedView, StatusView, time helpers
+    widgets.dart       NetImage, CreatorAvatar, ServiceBadge, HtmlContent, FeedView, StatusView, BackToTop, scroll / copy / time helpers
     splash.dart        BooruPlus-style splash + revealFromBottom transition
     onboarding.dart    Four parallax slides (art lags, text leads), notification permission, optional sign-in
     home.dart          HomeScreen (floating SliverAppBar + For You / Following / Popular tabs, Popular's bottom bar) and Sidebar (drawer)
@@ -62,6 +63,10 @@ lib/
     post_page.dart     Full post: text, poll, actions, media, attachments, tags, comments
     media_viewer.dart  Full-screen viewer: every image and video in one vertical scroll, zoomable images, Chewie video
     creator_page.dart  Artist profile (banner, site, links, Follow, Similar artists sheet) + tabs; FollowButton, ArtistTile
+    creator_media.dart CreatorMediaTab: an artist's images, GIFs and videos as a filterable grid
+    tag_page.dart      TagPostsPage: posts with a tag from every artist; openTag
+    random_page.dart   RandomPage: a random post or artist, shuffle and gear buttons
+    hash_lookup_page.dart  HashLookupPage: SHA-256 pasted or worked out from a picked file
     community_page.dart CommunityChatPage: a Patreon community channel as a chat log, newest at the bottom
     backup.dart        Export / import dialogs (SAF folder and file pickers)
     settings_cards.dart BooruPlus-style settings panels (SettingsGroup, SettingsSwitchCard, SettingsChoiceCard, ...)
@@ -71,6 +76,8 @@ lib/
 test/
   for_you_test.dart         Taste, source sampling, blending and ForYouFeed over fake fetches
   core_test.dart            Parsing, URLs, entity decoding, polls, fancards, comment threads, DM / popular / similar-artist / community scraping
+  explore_test.dart         Tag page and tagged posts, random redirects, hash lookup, sha256Hex, the Random setting
+  back_to_top_test.dart     BackToTop shows after two screens and scrolls up
   backup_test.dart          Backup encoding and sealing, merges, AppState likes and their account sync
   update_checker_test.dart  UpdateChecker against a fake Pawchive (MockClient + in-memory prefs)
   downloads_test.dart       DownloadManager: URL resolution, naming, failure and retry (in-memory target)
@@ -156,8 +163,31 @@ docs/pawchive-api.md        API reference and quirks
 - **Back to top.** Tapping the open tab or the logo on Home, the open
   Popular section in the bottom bar, or the open tab or collapsed name on a
   profile calls `scrollNestedToTop`. NestedScrollView moves all its inner
-  lists together, so every tab goes up. Back on Following or Popular
+  lists together, so every tab goes up. `BackToTop` (around `FeedView`,
+  popular artists, the media grid, tags and hash results) shows a pink
+  arrow at the bottom center once a list is two screens down; it uses
+  `scrollNestedToTop` inside a NestedScrollView and `scrollToTop`
+  otherwise. Both jump to 1.5 screens first so the animation doesn't build
+  (and load thumbnails for) every row. Back on Following or Popular
   returns to For You (`PopScope` on HomeScreen) instead of leaving.
+- **Media tab.** `CreatorMediaTab` pages the artist's posts with its own
+  `OffsetFeed`, created only when the tab opens, and shows `post.media` as
+  a 3-column grid filtered All / Photos / GIFs / Videos. When a filter
+  leaves fewer than 24 tiles it loads up to 4 more pages by itself, then
+  offers "Look further". Videos use the post's first image as a poster.
+- **Tags.** Explore's Tags tab lists the site's popular tags
+  (`AppState.popularTags`, once per session, filtered on the device) under
+  a "Posts tagged #query" row for any typed tag. `TagPostsPage` scrapes
+  `/posts?tag=` (the API ignores `tag`). A tag on a post asks whether to
+  show that artist's posts or everyone's.
+- **Random.** `RandomPage` reads where `/posts/random` or `/artists/random`
+  redirects (`followRedirects = false`) and shows a `PostPage` or
+  `CreatorPage` under two FABs: shuffle, and a gear to switch kind. The
+  first visit asks which (`AppSettings.randomKind`, null until chosen).
+- **Hash lookup.** `HashLookupPage` takes a pasted SHA-256 or picks a file
+  with SAF and hashes it from `SafStream().readFileStream` with
+  `sha256Hex` (no upload), then calls `/search_hash/{hash}`; a 404 is "no
+  posts". Discord matches are only counted.
 - **Quick actions.** Holding a post in a feed opens `showPostMenu` (artist,
   like, favorite, download, copy link / text, open). Post text and comments
   are in a `SelectionArea`; posts and profiles have Copy link (`copyLink`).
@@ -167,7 +197,8 @@ docs/pawchive-api.md        API reference and quirks
   download, the video that may play). Images show the thumbnail at once and
   load the full file only while on screen, through `_FullFileGate` (two at a
   time, one second apart). The list stops scrolling while an image is
-  zoomed. Holding an image shows a Download pill under it (inside its
+  zoomed. Holding an image presses it in over the long-press time (`_hold`,
+  so the hold visibly registers) and then shows a Download pill under it (inside its
   bottom edge when there's no room on screen); sliding onto it and lifting
   downloads that file, and it stays tappable for 4 s after lifting
   elsewhere. Videos have Download and Open in browser in Chewie's ⋮ menu

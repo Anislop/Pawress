@@ -7,6 +7,9 @@ import 'models.dart';
 
 enum ThemeChoice { plum, amoled }
 
+/// What the sidebar's Random picks.
+enum RandomKind { post, artist }
+
 /// How much of For You comes from followed artists.
 enum ForYouMix {
   following('Following', .85),
@@ -36,6 +39,7 @@ class AppSettings {
     this.downloadFolderName,
     this.askDownloadFolder = false,
     this.checkUpdates = true,
+    this.randomKind,
   });
 
   final ThemeChoice theme;
@@ -70,6 +74,9 @@ class AppSettings {
   /// Look for a newer GitHub release when the app starts.
   final bool checkUpdates;
 
+  /// Null until Random is first opened and asks.
+  final RandomKind? randomKind;
+
   static const intervals = [15, 30, 60, 180, 360, 720];
 
   AppSettings copyWith({
@@ -85,6 +92,7 @@ class AppSettings {
     bool clearDownloadFolder = false,
     bool? askDownloadFolder,
     bool? checkUpdates,
+    RandomKind? randomKind,
   }) => AppSettings(
     theme: theme ?? this.theme,
     notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
@@ -102,6 +110,7 @@ class AppSettings {
         : downloadFolder?.name ?? downloadFolderName,
     askDownloadFolder: askDownloadFolder ?? this.askDownloadFolder,
     checkUpdates: checkUpdates ?? this.checkUpdates,
+    randomKind: randomKind ?? this.randomKind,
   );
 
   factory AppSettings.fromJson(Map<String, dynamic> json) => AppSettings(
@@ -120,6 +129,7 @@ class AppSettings {
     downloadFolderName: json['downloadFolderName'] as String?,
     askDownloadFolder: json['askDownloadFolder'] as bool? ?? false,
     checkUpdates: json['checkUpdates'] as bool? ?? true,
+    randomKind: RandomKind.values.asNameMap()[json['randomKind']],
   );
 
   Map<String, dynamic> toJson() => {
@@ -135,6 +145,7 @@ class AppSettings {
     'downloadFolderName': downloadFolderName,
     'askDownloadFolder': askDownloadFolder,
     'checkUpdates': checkUpdates,
+    'randomKind': randomKind?.name,
   };
 }
 
