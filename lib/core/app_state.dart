@@ -4,14 +4,15 @@ import 'package:flutter/foundation.dart';
 
 import 'api.dart';
 import 'app_update.dart';
+import 'backup.dart';
 import 'creators.dart';
 import 'downloads.dart';
 import 'models.dart';
 import 'store.dart';
 import 'updates.dart';
 
-/// App-wide state: settings, the signed-in account, follows and update
-/// notices. Screens listen to it and call its methods; it persists every
+/// App-wide state: settings, the signed-in account, follows, liked posts
+/// and update notices. Screens listen to it and call its methods; it persists every
 /// change through [Store].
 class AppState extends ChangeNotifier {
   AppState({Store? store, PawchiveApi? api})
@@ -38,7 +39,9 @@ class AppState extends ChangeNotifier {
   AppSettings settings = const AppSettings();
   String? accountName;
   List<Follow> follows = [];
+  List<Favorite> favorites = [];
   List<UpdateNotice> notices = [];
+  Set<String> _favoriteKeys = {};
 
   /// A foreground update check is running.
   bool checking = false;
@@ -57,6 +60,7 @@ class AppState extends ChangeNotifier {
     api.session = await store.session();
     accountName = await store.accountName();
     follows = await store.follows();
+    _setFavorites(await store.favorites());
     notices = await store.notices();
     directory.remember(follows.map((f) => f.creator));
     initialized = true;
@@ -218,6 +222,100 @@ class AppState extends ChangeNotifier {
     await _schedule();
   }
 
+  // Favorites (liked posts).
+
+  bool isFavorite(Post post) => _favoriteKeys.contains(post.key);
+
+  Future<void> toggleFavorite(Post post) =>
+      isFavorite(post) ? unfavorite(post) : favorite(post);
+
+  Future<void> favorite(Post post) async {
+    if (isFavorite(post)) return;
+    _setFavorites([
+      Favorite(post: post, favoritedAt: DateTime.now().toUtc()),
+      ...favorites,
+    ]);
+    await _saveFavorites();
+    if (signedIn) {
+      try {
+        await api.addFavoritePost(post);
+        _setFavorites([
+          for (final f in favorites)
+            f.key == post.key ? f.copyWith(synced: true) : f,
+        ]);
+        await _saveFavorites();
+      } on ApiException catch (e) {
+        _say('Liked here, but not on your Pawchive account: ${e.message}');
+      }
+    }
+  }
+
+  Future<void> unfavorite(Post post) async {
+    _setFavorites(favorites.where((f) => f.key != post.key).toList());
+    await _saveFavorites();
+    if (signedIn) {
+      try {
+        await api.removeFavoritePost(post);
+      } on ApiException catch (e) {
+        _say('Unliked here, but not on your Pawchive account: ${e.message}');
+      }
+    }
+  }
+
+  void _setFavorites(List<Favorite> value) {
+    favorites = value;
+    _favoriteKeys = {for (final favorite in value) favorite.key};
+  }
+
+  Future<void> _saveFavorites() async {
+    notifyListeners();
+    await store.saveFavorites(favorites);
+  }
+
+  // Backup.
+
+  /// Follows and likes, plus the sign-in sealed with [password] when one is
+  /// given and the user is signed in.
+  Future<Backup> exportBackup({String? password}) async => Backup(
+    follows: follows,
+    favorites: favorites,
+    credentials: password == null || password.isEmpty || !signedIn
+        ? null
+        : await SealedCredentials.seal(
+            session: api.session!,
+            accountName: accountName,
+            password: password,
+          ),
+  );
+
+  /// Adds the follows and likes in [backup] that aren't here yet, signs in
+  /// with [account] when given, then syncs with the account. Returns how
+  /// many follows and likes were added.
+  Future<({int follows, int favorites})> importBackup(
+    Backup backup, {
+    ({String session, String? name})? account,
+  }) async {
+    final followCount = follows.length;
+    final favoriteCount = favorites.length;
+    follows = mergeFollows(follows, backup.follows);
+    _setFavorites(mergeFavorites(favorites, backup.favorites));
+    directory.remember(follows.map((f) => f.creator));
+    await _saveFollows();
+    await _saveFavorites();
+    if (account != null) {
+      // Synced marks belong to the old account; keeping them would make
+      // the sync remove whatever the new account lacks.
+      if (signedIn) await signOut();
+      await signIn(account.session, account.name);
+    } else {
+      await syncFavorites();
+    }
+    return (
+      follows: follows.length - followCount,
+      favorites: favorites.length - favoriteCount,
+    );
+  }
+
   // Account.
 
   Future<void> signIn(String session, String? name) async {
@@ -232,8 +330,10 @@ class AppState extends ChangeNotifier {
     api.session = null;
     accountName = null;
     follows = [for (final f in follows) f.copyWith(synced: false)];
+    _setFavorites([for (final f in favorites) f.copyWith(synced: false)]);
     await store.saveAccount(null, null);
     await _saveFollows();
+    await _saveFavorites();
   }
 
   Future<void> _expireSession() async {
@@ -242,12 +342,17 @@ class AppState extends ChangeNotifier {
     _say('Your Pawchive session expired. Sign in again to sync follows.');
   }
 
-  /// Two-way sync between local follows and the account's favorite
-  /// creators. A follow that was synced before and is now missing on the
-  /// account was removed on the website, so it is removed here too; one
-  /// never synced is added to the account.
+  /// Two-way sync of follows with the account's favorite creators and of
+  /// likes with its favorite posts. Anything synced before and now missing
+  /// on the account was removed on the website, so it is removed here too;
+  /// anything never synced is added to the account.
   Future<void> syncFavorites() async {
     if (!signedIn) return;
+    await _syncFollows();
+    if (signedIn) await _syncLikes();
+  }
+
+  Future<void> _syncFollows() async {
     try {
       final remote = {
         for (final creator in await api.favoriteCreators())
@@ -282,6 +387,34 @@ class AppState extends ChangeNotifier {
       }
     } on ApiException catch (e) {
       if (!e.unauthorized) _say('Could not sync follows: ${e.message}');
+    }
+  }
+
+  Future<void> _syncLikes() async {
+    try {
+      final remote = {
+        for (final post in await api.favoritePosts()) post.key: post,
+      };
+      final merged = <Favorite>[];
+      for (final favorite in favorites) {
+        if (remote.containsKey(favorite.key)) {
+          merged.add(favorite.copyWith(synced: true));
+        } else if (!favorite.synced) {
+          await api.addFavoritePost(favorite.post);
+          merged.add(favorite.copyWith(synced: true));
+        }
+      }
+      final local = {for (final favorite in merged) favorite.key};
+      final now = DateTime.now().toUtc();
+      _setFavorites([
+        ...merged,
+        for (final post in remote.values)
+          if (!local.contains(post.key))
+            Favorite(post: post, favoritedAt: now, synced: true),
+      ]);
+      await _saveFavorites();
+    } on ApiException catch (e) {
+      if (!e.unauthorized) _say('Could not sync likes: ${e.message}');
     }
   }
 

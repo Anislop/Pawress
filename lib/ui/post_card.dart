@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import '../core/models.dart';
 import 'app_scope.dart';
 import 'autoplay.dart';
+import 'comments.dart';
 import 'creator_page.dart';
 import 'media_viewer.dart';
+import 'poll.dart';
 import 'post_page.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -69,40 +71,12 @@ class PostCard extends StatelessWidget {
                     const SizedBox(height: 10),
                     MediaGrid(post: post, media: media),
                   ],
-                  if (others > 0 || post.favorites != null) ...[
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        if (post.favorites != null) ...[
-                          Icon(
-                            Icons.favorite_rounded,
-                            size: 16,
-                            color: pawPink,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            compactCount(post.favorites!),
-                            style: TextStyle(color: ink(.6), fontSize: 13),
-                          ),
-                          const SizedBox(width: 14),
-                        ],
-                        if (others > 0) ...[
-                          Icon(
-                            Icons.attach_file_rounded,
-                            size: 16,
-                            color: ink(.5),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            others == 1
-                                ? '1 attachment'
-                                : '$others attachments',
-                            style: TextStyle(color: ink(.5), fontSize: 13),
-                          ),
-                        ],
-                      ],
-                    ),
+                  if (post.poll != null) ...[
+                    const SizedBox(height: 10),
+                    PollView(post.poll!, compact: true),
                   ],
+                  const SizedBox(height: 2),
+                  PostActions(post: post, attachments: others),
                 ],
               ),
             ),
@@ -111,6 +85,99 @@ class PostCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Comments, like (with the count when the popular page gave one) and the
+/// attachment count, under a post.
+class PostActions extends StatelessWidget {
+  const PostActions({
+    super.key,
+    required this.post,
+    this.attachments = 0,
+    this.onComments,
+  });
+
+  final Post post;
+  final int attachments;
+
+  /// Defaults to the comments sheet.
+  final VoidCallback? onComments;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppScope.of(context);
+    final liked = state.isFavorite(post);
+    return Row(
+      children: [
+        _ActionButton(
+          tooltip: 'Comments',
+          icon: Icons.chat_bubble_outline_rounded,
+          color: ink(.6),
+          onTap: onComments ?? () => showComments(context, post),
+        ),
+        const SizedBox(width: 12),
+        _ActionButton(
+          tooltip: liked ? 'Unlike' : 'Like',
+          icon: liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+          color: liked ? pawPink : ink(.6),
+          label: post.favorites == null ? null : compactCount(post.favorites!),
+          onTap: () => state.toggleFavorite(post),
+        ),
+        const Spacer(),
+        if (attachments > 0) ...[
+          Icon(Icons.attach_file_rounded, size: 16, color: ink(.5)),
+          const SizedBox(width: 4),
+          Text(
+            attachments == 1 ? '1 attachment' : '$attachments attachments',
+            style: TextStyle(color: ink(.5), fontSize: 13),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ActionButton extends StatelessWidget {
+  const _ActionButton({
+    required this.tooltip,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+    this.label,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+  final String? label;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: tooltip,
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(4, 6, 8, 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 160),
+              transitionBuilder: (child, animation) =>
+                  ScaleTransition(scale: animation, child: child),
+              child: Icon(icon, key: ValueKey(icon), size: 18, color: color),
+            ),
+            if (label != null) ...[
+              const SizedBox(width: 5),
+              Text(label!, style: TextStyle(color: color, fontSize: 13)),
+            ],
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _NameLine extends StatelessWidget {

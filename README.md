@@ -23,16 +23,21 @@ Flutter and laid out like X on Android.
   - **Popular:** a bottom bar switches between **Artists** (every creator,
     ranked by favorites, filterable by site and sortable) and **Posts** (the
     most favorited posts today, this week or this month).
-- **Sidebar.** Your account, follow count, Following, Notifications, Explore,
-  Downloads and Settings. Swipe right on For You to open it, left to close it.
+- **Sidebar.** Your account, follow count, Following, Favorites,
+  Notifications, Explore, Downloads and Settings. Swipe right on For You to open it, left to close it.
 - **Artist pages.** Banner, avatar, original site (Patreon, Pixiv Fanbox,
   Discord, Fantia and more) with a link, linked accounts, **Follow** and
   **Similar artists**. Tabs for Posts, Announcements, Tags (tap one to filter
-  posts), DMs and Fancards (Fanbox).
-- **Posts.** Full text, every image and video, other attachments, tags and
-  comments.
-- **Media viewer.** Full screen and swipeable, with pinch and double-tap zoom.
-  GIFs animate, and videos play inline with controls.
+  posts), DMs, Community chats (Patreon) and Fancards (Fanbox).
+- **Posts.** Full text, every image and video, Patreon poll results, other
+  attachments, tags and threaded comments. Every post has a comments button
+  (a sheet over the feed) and a like button, with the favorite count on
+  popular posts.
+- **Favorites.** Liked posts, kept on the device and synced with your Pawchive
+  favorite posts when signed in.
+- **Media viewer.** Full screen, with a post's images and videos one under
+  another in a single vertical scroll, pinch and double-tap zoom. GIFs
+  animate, and videos play inline with controls.
 - **Autoplay.** In feeds, the most visible GIF or video plays muted and looping,
   one at a time. It can be turned off in Settings.
 - **Downloads.** Save one file from the viewer, every file of a post, or a
@@ -43,7 +48,9 @@ Flutter and laid out like X on Android.
   every 15 minutes to 12 hours.
 - **Search.** Find artists by name across services, or search post text.
 - **Account sync.** Optional sign-in through Pawchive's own login page. Follows
-  then sync with your Pawchive favorite artists.
+  and likes then sync with your Pawchive favorite artists and posts.
+- **Backup.** Export follows and likes to a JSON file, optionally with your
+  sign-in encrypted by a password, and import them on another device.
 - **Themes.** Plum (the brand palette) or AMOLED black.
 - **Updates.** At launch (or from Settings, "Check now"), Pawress looks for a
   newer build in this repository's GitHub releases and offers to install it.

@@ -265,4 +265,254 @@ void main() {
     expect(decodeEntities('&amp;lt;'), '&lt;');
     expect(decodeEntities('&bogus; &#xZZ;'), '&bogus; &#xZZ;');
   });
+
+  group('Poll', () {
+    const poll = {
+      'title': 'Character Poll 51',
+      'choices': [
+        {'text': 'Qifrey', 'votes': 4},
+        {'text': 'Tighnari', 'votes': 31},
+        {'text': 'Baizhu', 'votes': '6'},
+      ],
+      'closes_at': '2026-11-08T21:02:00.000+00:00',
+      'created_at': '2026-11-02T20:55:05.000+00:00',
+      'description': null,
+      'allow_multiple': false,
+    };
+
+    test('reads a Patreon poll from a post', () {
+      final post = Post.fromJson({..._creatorPost, 'poll': poll});
+      final read = post.poll!;
+      expect(read.title, 'Character Poll 51');
+      expect(read.choices.map((c) => c.votes), [4, 31, 6]);
+      expect(read.totalVotes, 41);
+      expect(read.mostVotes, 31);
+      expect(read.description, isNull);
+      expect(read.closesAt, DateTime.utc(2026, 11, 8, 21, 2));
+      expect(read.closedAt(DateTime.utc(2026, 11, 9)), isTrue);
+      expect(read.closedAt(DateTime.utc(2026, 11, 3)), isFalse);
+    });
+
+    test('is absent for null or empty polls', () {
+      expect(Post.fromJson({..._creatorPost, 'poll': null}).poll, isNull);
+      expect(
+        Post.fromJson({
+          ..._creatorPost,
+          'poll': {'title': 'x', 'choices': []},
+        }).poll,
+        isNull,
+      );
+    });
+  });
+
+  test('Post survives a JSON round trip without its expiring temp_url', () {
+    final post = Post.fromJson({
+      ..._creatorPost,
+      'poll': {
+        'title': 'Vote',
+        'choices': [
+          {'text': 'A', 'votes': 1},
+        ],
+      },
+    });
+    final copy = Post.fromJson(post.toJson());
+    expect(copy.key, 'patreon/30500811/173978323');
+    expect(copy.title, post.title);
+    expect(copy.content, post.content);
+    expect(copy.published, post.published);
+    expect(copy.tags, post.tags);
+    expect(copy.files.map((f) => f.path), post.files.map((f) => f.path));
+    expect(copy.poll!.choices.single.text, 'A');
+    // The signed URL expires, so a stored preview-only file is fetched
+    // again instead.
+    expect(copy.file!.tempUrl, isNull);
+    expect(copy.file!.previewOnly, isTrue);
+    expect(copy.file!.fullUrl, isNull);
+  });
+
+  test('Favorite survives a JSON round trip', () {
+    final favorite = Favorite(
+      post: Post.fromJson(_recentPost),
+      favoritedAt: DateTime.utc(2026, 11, 2),
+      synced: true,
+    );
+    final copy = Favorite.fromJson(favorite.toJson());
+    expect(copy.key, 'fanbox/9/1');
+    expect(copy.favoritedAt, favorite.favoritedAt);
+    expect(copy.synced, isTrue);
+  });
+
+  test('Fancard builds its path from the hash Pawchive sends', () {
+    // The live shape: no path or file object, only hash and ext.
+    final card = Fancard.tryParse({
+      'id': 8649,
+      'user_id': '37736420',
+      'file_id': 8649,
+      'price': '1000',
+      'hash':
+          'b804011ce50cbf64750c71b20c0e59ae2baf7a6994f4684a301ea97a0ba06d96',
+      'mime': 'image/webp',
+      'ext': '.webp',
+      'added': '2026-09-16T21:00:00',
+      'size': 33406,
+    })!;
+    expect(
+      card.file.thumbnailUrl,
+      'https://img.pawchive.pw/thumbnail/data/b8/04/'
+      'b804011ce50cbf64750c71b20c0e59ae2baf7a6994f4684a301ea97a0ba06d96.webp',
+    );
+    expect(card.price, '1000');
+    expect(card.added, DateTime.utc(2026, 9, 16, 21));
+    expect(Fancard.tryParse({'id': 1}), isNull);
+  });
+
+  group('threadComments', () {
+    Comment c(String id, [String? parent]) =>
+        Comment(id: id, commenter: id, content: '', parentId: parent);
+
+    test('puts replies under their parent, depth first', () {
+      final threaded = threadComments([
+        c('1'),
+        c('2'),
+        c('3', '1'),
+        c('4', '3'),
+        c('5', '2'),
+        c('6', '1'),
+      ]);
+      expect(
+        [for (final t in threaded) '${t.comment.id}:${t.depth}'],
+        ['1:0', '3:1', '4:2', '6:1', '2:0', '5:1'],
+      );
+    });
+
+    test('keeps orphans and loops at the top level, each once', () {
+      final threaded = threadComments([
+        c('1', 'gone'),
+        c('2', '3'),
+        c('3', '2'),
+        c('4', '4'),
+      ]);
+      expect([for (final t in threaded) t.comment.id], ['1', '4', '2', '3']);
+      expect(threaded.every((t) => t.comment.id != '1' || t.depth == 0), true);
+    });
+  });
+
+  test('parseCommunityPage reads channels, messages and paging', () {
+    const html = '''
+<div class="chat-page">
+  <div class="paginator chat-page__pager">
+    <small>
+      Showing 1 - 25 of 114
+    </small>
+  </div>
+  <details class="chat-page__picker" open>
+    <ul class="chat-page__channels">
+      <li>
+        <a class="chat-page__channel is-active"
+           href="/patreon/user/109106017/community/28ae6a71342144349849e41ec3c82e17" title="Chat">
+          <span class="chat-page__channel-name">Chat</span>
+          <span class="chat-page__channel-count">114</span>
+        </a>
+      </li>
+      <li>
+        <a class="chat-page__channel"
+           href="/patreon/user/109106017/community/ff00" title="Art &amp; WIPs">
+          <span class="chat-page__channel-name">Art &amp; WIPs</span>
+          <span class="chat-page__channel-count">7</span>
+        </a>
+      </li>
+    </ul>
+  </details>
+  <div class="chat-page__log">
+    <div class="community__chat">
+      <div class="cmsg cmsg--head cmsg--creator ">
+        <div class="cmsg__gutter">
+          <img class="cmsg__avatar" src="/icons/patreon/109106017" alt="Okitatsuki AI Art" loading="lazy">
+        </div>
+        <div class="cmsg__body">
+          <div class="cmsg__reply">
+            <span class="cmsg__reply-author" title="Sumith Laxan">Sumith Laxan</span>
+            <span class="cmsg__reply-text">I can&#39;t seem to understand the collections</span>
+          </div>
+          <div class="cmsg__head">
+            <span class="cmsg__author" title="Okitatsuki AI Art">Okitatsuki AI Art</span>
+            <span class="cmsg__badge">Creator</span>
+            <time class="cmsg__time" datetime="2026-10-27T03:34:23.809111" title="Oct 27, 2026 03:34 UTC">6 days ago</time>
+          </div>
+          <div class="cmsg__text"><p>The longer videos are from this year.</p></div>
+        </div>
+      </div>
+      <div class="cmsg cmsg--head ">
+        <div class="cmsg__gutter">
+          <span class="cmsg__avatar cmsg__avatar--letter" style="background:hsl(279 42% 48%)">D</span>
+        </div>
+        <div class="cmsg__body">
+          <div class="cmsg__head">
+            <span class="cmsg__author" title="dapjpjnm">dapjpjnm</span>
+            <time class="cmsg__time" datetime="2026-10-30T00:40:47.867754" title="Oct 30, 2026 00:40 UTC">3 days ago</time>
+          </div>
+          <div class="cmsg__text"><p>Here&#x27;s a small suggestion!</p></div>
+        </div>
+      </div>
+      <div class="cmsg ">
+        <div class="cmsg__gutter">
+        </div>
+        <div class="cmsg__body">
+          <div class="cmsg__text"><p>Second line</p></div>
+          <a class="cmsg__image" href="https://file.pawchive.pw/data/51/b5/51b5.png" target="_blank" rel="noopener noreferrer">
+            <img src="https://img.pawchive.pw/thumbnail/data/51/b5/51b5.png" alt="a.png" loading="lazy" referrerpolicy="no-referrer">
+          </a>
+          <a class="cmsg__embed" href="https://mega.nz/file/SM513JIa" target="_blank" rel="noopener">
+            <span class="cmsg__embed-title">21.51 MB file on MEGA</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>''';
+    final page = parseCommunityPage(html);
+    expect(page.channels.map((c) => c.id), [
+      '28ae6a71342144349849e41ec3c82e17',
+      'ff00',
+    ]);
+    expect(page.channels.first.count, 114);
+    expect(page.channels.last.name, 'Art & WIPs');
+    expect(page.channel!.name, 'Chat');
+    expect(page.total, 114);
+    expect(page.end, 25);
+    expect(page.hasOlder, isTrue);
+
+    final [creator, member, continued] = page.messages;
+    expect(creator.author, 'Okitatsuki AI Art');
+    expect(creator.fromCreator, isTrue);
+    expect(creator.avatarUrl, 'https://pawchive.pw/icons/patreon/109106017');
+    expect(creator.replyAuthor, 'Sumith Laxan');
+    expect(creator.replyText, "I can't seem to understand the collections");
+    expect(creator.time, DateTime.utc(2026, 10, 27, 3, 34, 23, 809, 111));
+    expect(creator.content, '<p>The longer videos are from this year.</p>');
+    expect(member.fromCreator, isFalse);
+    expect(member.avatarLetter, 'D');
+    expect(member.avatarHue, 279);
+    expect(member.avatarUrl, isNull);
+    expect(member.continued, isFalse);
+    expect(continued.continued, isTrue);
+    expect(continued.author, 'dapjpjnm');
+    expect(continued.content, '<p>Second line</p>');
+    expect(
+      continued.images.single.url,
+      'https://file.pawchive.pw/data/51/b5/51b5.png',
+    );
+    expect(
+      continued.images.single.thumbnail,
+      'https://img.pawchive.pw/thumbnail/data/51/b5/51b5.png',
+    );
+    expect(continued.embeds.single.title, '21.51 MB file on MEGA');
+    expect(creator.images, isEmpty);
+  });
+
+  test('parseCommunityPage reads the last page as having nothing older', () {
+    final page = parseCommunityPage('<small>Showing 101 - 114 of 114</small>');
+    expect(page.hasOlder, isFalse);
+    expect(page.messages, isEmpty);
+  });
 }

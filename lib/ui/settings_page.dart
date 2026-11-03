@@ -5,6 +5,7 @@ import '../core/config.dart';
 import '../core/store.dart';
 import '../core/updates.dart';
 import 'app_scope.dart';
+import 'backup.dart';
 import 'downloads.dart';
 import 'update_dialog.dart';
 import 'login_page.dart';
@@ -40,18 +41,21 @@ class SettingsPage extends StatelessWidget {
               leading: const Icon(Icons.verified_user_outlined),
               title: Text(state.accountName ?? 'Pawchive account'),
               subtitle: const Text(
-                'Follows sync with your Pawchive favorite artists',
+                'Follows and likes sync with your Pawchive favorites',
               ),
             ),
             ListTile(
               leading: const Icon(Icons.sync_rounded),
-              title: const Text('Sync follows now'),
+              title: const Text('Sync follows and likes now'),
               onTap: () async {
                 final messenger = ScaffoldMessenger.of(context);
                 await state.syncFavorites();
                 messenger.showSnackBar(
                   SnackBar(
-                    content: Text('Following ${state.follows.length} artists.'),
+                    content: Text(
+                      'Following ${state.follows.length} artists, '
+                      '${state.favorites.length} liked posts.',
+                    ),
                   ),
                 );
               },
@@ -59,7 +63,9 @@ class SettingsPage extends StatelessWidget {
             ListTile(
               leading: const Icon(Icons.logout_rounded),
               title: const Text('Sign out'),
-              subtitle: const Text('Your follows stay on this device'),
+              subtitle: const Text(
+                'Your follows and likes stay on this device',
+              ),
               onTap: () async {
                 // Forget the website login too, or signing in again would
                 // skip straight back into the old session.
@@ -72,7 +78,7 @@ class SettingsPage extends StatelessWidget {
               leading: const Icon(Icons.login_rounded),
               title: const Text('Sign in to Pawchive'),
               subtitle: const Text(
-                'Optional. Syncs follows with your favorite artists.',
+                'Optional. Syncs follows and likes with your favorites.',
               ),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(builder: (_) => const LoginPage()),
@@ -185,6 +191,21 @@ class SettingsPage extends StatelessWidget {
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute<void>(builder: (_) => const DownloadsPage()),
             ),
+          ),
+          const SectionLabel('Backup'),
+          ListTile(
+            leading: const Icon(Icons.upload_file_rounded),
+            title: const Text('Export backup'),
+            subtitle: const Text(
+              'Follows, likes and, with a password, your sign-in',
+            ),
+            onTap: () => exportBackup(context),
+          ),
+          ListTile(
+            leading: const Icon(Icons.file_open_outlined),
+            title: const Text('Import backup'),
+            subtitle: const Text('Adds to what is already here'),
+            onTap: () => importBackup(context),
           ),
           const SectionLabel('About'),
           ListTile(
