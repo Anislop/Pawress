@@ -107,6 +107,12 @@ class _PostPageState extends State<PostPage> {
             ),
           if (post != null)
             IconButton(
+              tooltip: 'Copy link',
+              icon: const Icon(Icons.link_rounded),
+              onPressed: () => copyLink(context, post.url),
+            ),
+          if (post != null)
+            IconButton(
               tooltip: 'Open on Pawchive',
               icon: const Icon(Icons.open_in_new_rounded),
               onPressed: () => openExternal(post.url),
@@ -164,28 +170,37 @@ class _PostPageState extends State<PostPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (post.title.isNotEmpty)
-                Text(
-                  post.title,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                    height: 1.3,
-                  ),
+              // Holding the title or text selects it for copying.
+              SelectionArea(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (post.title.isNotEmpty)
+                      Text(
+                        post.title,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          height: 1.3,
+                        ),
+                      ),
+                    const SizedBox(height: 6),
+                    Text(
+                      [
+                        if (post.published != null)
+                          'Published ${longDate(post.published)}',
+                        if (post.added != null)
+                          'archived ${longDate(post.added)}',
+                      ].join(' · '),
+                      style: TextStyle(color: ink(.5), fontSize: 13),
+                    ),
+                    if (plainText(post.content).isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      HtmlContent(post.content),
+                    ],
+                  ],
                 ),
-              const SizedBox(height: 6),
-              Text(
-                [
-                  if (post.published != null)
-                    'Published ${longDate(post.published)}',
-                  if (post.added != null) 'archived ${longDate(post.added)}',
-                ].join(' · '),
-                style: TextStyle(color: ink(.5), fontSize: 13),
               ),
-              if (plainText(post.content).isNotEmpty) ...[
-                const SizedBox(height: 12),
-                HtmlContent(post.content),
-              ],
               if (post.poll != null) ...[
                 const SizedBox(height: 12),
                 PollView(post.poll!),

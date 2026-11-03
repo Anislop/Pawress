@@ -153,13 +153,25 @@ docs/pawchive-api.md        API reference and quirks
 - **Sidebar gesture.** `HomeScreen._onOverscroll` opens the drawer when the
   For You tab is dragged past its left edge; the drawer closes with its own
   drag.
+- **Back to top.** Tapping the open tab or the logo on Home, the open
+  Popular section in the bottom bar, or the open tab or collapsed name on a
+  profile calls `scrollNestedToTop`. NestedScrollView moves all its inner
+  lists together, so every tab goes up. Back on Following or Popular
+  returns to For You (`PopScope` on HomeScreen) instead of leaving.
+- **Quick actions.** Holding a post in a feed opens `showPostMenu` (artist,
+  like, favorite, download, copy link / text, open). Post text and comments
+  are in a `SelectionArea`; posts and profiles have Copy link (`copyLink`).
 - **Media viewer.** One `CustomScrollView` centered on the tapped item, so
   earlier items grow upward without moving it. Each item reports its
   visibility; the one filling most of the screen is "current" (top bar count,
   download, the video that may play). Images show the thumbnail at once and
   load the full file only while on screen, through `_FullFileGate` (two at a
   time, one second apart). The list stops scrolling while an image is
-  zoomed.
+  zoomed. Holding an image shows a Download pill under it (inside its
+  bottom edge when there's no room on screen); sliding onto it and lifting
+  downloads that file, and it stays tappable for 4 s after lifting
+  elsewhere. Videos have Download and Open in browser in Chewie's ⋮ menu
+  (`additionalOptions`).
 - **Autoplay.** Each GIF or video tile reports its visibility (visibility_detector)
   to `FeedAutoplay.instance`, which picks one tile at 60%+ visibility. The tile
   waits 400 ms, then loads the full file (fetching the post first for

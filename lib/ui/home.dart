@@ -37,6 +37,8 @@ class _HomeScreenState extends State<HomeScreen>
   static const _popularTab = 2;
 
   final _scaffold = GlobalKey<ScaffoldState>();
+  final _nested = GlobalKey<NestedScrollViewState>();
+  bool _drawerOpen = false;
   late final TabController _tabs = TabController(length: 3, vsync: this)
     ..addListener(_onTab);
   int _tab = 0;
@@ -113,6 +115,19 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _onTab() {
     if (_tabs.index != _tab) setState(() => _tab = _tabs.index);
+  }
+
+  void _scrollToTop() => scrollNestedToTop(_nested.currentState);
+
+  /// Tapping the tab that's already open scrolls it back to the top.
+  void _onTabTap(int index) {
+    if (index == _tabs.index && !_tabs.indexIsChanging) _scrollToTop();
+  }
+
+  void _onSection(int index) {
+    final section = PopularSection.values[index];
+    if (section == _section) return _scrollToTop();
+    setState(() => _section = section);
   }
 
   /// Swiping right past the first tab opens the sidebar, as in X.
@@ -209,10 +224,21 @@ class _HomeScreenState extends State<HomeScreen>
   void _push(WidgetBuilder builder) =>
       Navigator.of(context).push(MaterialPageRoute<void>(builder: builder));
 
+  /// Back on Following or Popular returns to For You before leaving the
+  /// app, as in X.
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => PopScope(
+    canPop: _tab == 0 || _drawerOpen,
+    onPopInvokedWithResult: (didPop, _) {
+      if (!didPop) _tabs.animateTo(0);
+    },
+    child: _scaffoldView(context),
+  );
+
+  Widget _scaffoldView(BuildContext context) => Scaffold(
     key: _scaffold,
     drawer: Sidebar(onOpen: _push),
+    onDrawerChanged: (open) => setState(() => _drawerOpen = open),
     bottomNavigationBar: AnimatedSize(
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
@@ -221,8 +247,7 @@ class _HomeScreenState extends State<HomeScreen>
           ? NavigationBar(
               height: 64,
               selectedIndex: _section.index,
-              onDestinationSelected: (index) =>
-                  setState(() => _section = PopularSection.values[index]),
+              onDestinationSelected: _onSection,
               destinations: const [
                 NavigationDestination(
                   icon: Icon(Icons.people_outline_rounded),
@@ -239,6 +264,7 @@ class _HomeScreenState extends State<HomeScreen>
           : const SizedBox(width: double.infinity),
     ),
     body: NestedScrollView(
+      key: _nested,
       floatHeaderSlivers: true,
       headerSliverBuilder: (context, scrolled) => [
         SliverOverlapAbsorber(
@@ -255,7 +281,10 @@ class _HomeScreenState extends State<HomeScreen>
                 icon: const _AccountAvatar(size: 32),
               ),
             ),
-            title: Image.asset(logoAsset, height: 26),
+            title: GestureDetector(
+              onTap: _scrollToTop,
+              child: Image.asset(logoAsset, height: 26),
+            ),
             actions: [
               IconButton(
                 tooltip: 'Search',
@@ -266,6 +295,7 @@ class _HomeScreenState extends State<HomeScreen>
             ],
             bottom: TabBar(
               controller: _tabs,
+              onTap: _onTabTap,
               tabs: const [
                 Tab(text: 'For You'),
                 Tab(text: 'Following'),
