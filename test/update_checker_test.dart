@@ -36,6 +36,8 @@ class _FakePawchive {
             'user': '7',
             'service': 'patreon',
             'title': 'Post $id',
+            'content': '<p>Text of <b>post</b> $id</p>',
+            'file': {'name': '$id.png', 'path': '/aa/bb/$id.png'},
             'added': '2026-11-0${id}T00:00:00',
           },
       ]);
@@ -90,7 +92,10 @@ void main() {
     final follow = (await store.follows()).single;
     expect(follow.unread, 1);
     expect(follow.seenPostIds, ['3', '2', '1']);
-    expect((await store.notices()).single.postTitle, 'Post 3');
+    final stored = (await store.notices()).single;
+    expect(stored.postTitle, 'Post 3');
+    expect(stored.excerpt, 'Text of post 3');
+    expect(stored.thumbnailPath, '/aa/bb/3.png');
   });
 
   test('an unchanged profile stamp skips fetching posts', () async {
@@ -137,5 +142,70 @@ void main() {
       [follow('1', NotifyLevel.push), follow('2', NotifyLevel.inApp)],
     );
     expect(shown.map((n) => n.creator.id), ['1']);
+  });
+
+  group('push notification text', () {
+    const creator = Creator(id: '7', service: 'patreon', name: 'Artist');
+    UpdateNotice notice(String id, {String title = '', String excerpt = ''}) =>
+        UpdateNotice(
+          id: 'patreon/7/$id',
+          creator: creator,
+          postId: id,
+          postTitle: title,
+          excerpt: excerpt,
+          at: DateTime.utc(2026),
+        );
+
+    test('is artist - title over the start of the text', () {
+      final text = notificationText([
+        notice('2', title: 'Sketch dump', excerpt: 'Some sketches'),
+      ]);
+      expect(text.title, 'Artist - Sketch dump');
+      expect(text.body, 'Some sketches');
+      expect(text.count, isNull);
+    });
+
+    test('uses the newest post and counts the rest', () {
+      final text = notificationText([
+        notice('3', title: 'Newest', excerpt: 'New'),
+        notice('2', title: 'Older'),
+      ]);
+      expect(text.title, 'Artist - Newest');
+      expect(text.count, '2 new posts');
+    });
+
+    test('falls back to the artist name and site', () {
+      final text = notificationText([notice('1')]);
+      expect(text.title, 'Artist');
+      expect(text.body, 'New post on ${creator.site.label}');
+    });
+
+    test('keeps the excerpt through JSON', () {
+      final stored = UpdateNotice.fromJson(
+        jsonDecode(jsonEncode(notice('1', excerpt: 'Hi').toJson()))
+            as Map<String, dynamic>,
+      );
+      expect(stored.excerpt, 'Hi');
+      expect(stored.markRead().excerpt, 'Hi');
+    });
+  });
+
+  group('htmlExcerpt', () {
+    test('strips tags, decodes entities and joins lines', () {
+      expect(
+        htmlExcerpt('<p>One &amp; two</p><p>three<br>four</p>'),
+        'One & two three four',
+      );
+    });
+
+    test('drops a tag cut off at the end', () {
+      expect(htmlExcerpt('Hello <a href="https://exa'), 'Hello');
+    });
+
+    test('cuts long text at a word with an ellipsis', () {
+      final text = htmlExcerpt('word ' * 100, max: 30);
+      expect(text.length, lessThanOrEqualTo(30));
+      expect(text, endsWith('word…'));
+    });
   });
 }

@@ -136,8 +136,12 @@ docs/pawchive-api.md        API reference and quirks
 - **Notifications.** `UpdateChecker.check()` polls each follow's profile
   `updated` stamp, fetches the first page only when it changed, and treats
   post ids not in `Follow.seenPostIds` as new. A creator's first check only
-  records a baseline. It runs from the Notifications page (pull to refresh)
-  and from WorkManager (`backgroundDispatcher`, interval in Settings, 15 min
+  records a baseline. A push notification is per creator and shows their
+  newest post: `artist - title` (`notificationText`), the post's text cut
+  by `htmlExcerpt` (stored as `UpdateNotice.excerpt`), and the first
+  image's thumbnail as a big picture (fetched with the Pawress user agent,
+  1 s apart, text-only if it fails). It runs from the Notifications page
+  (pull to refresh) and from WorkManager (`backgroundDispatcher`, interval in Settings, 15 min
   minimum). The background isolate builds its own `Store` and `PawchiveApi`,
   so keep `core/` free of UI dependencies. The app reloads follows and notices
   from the store on resume.
