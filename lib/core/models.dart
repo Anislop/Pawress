@@ -199,6 +199,30 @@ String decodeEntities(String text) => text.replaceAllMapped(_entity, (match) {
   }[name]!;
 });
 
+final _blockBreak = RegExp(
+  r'<(br|/p|/div|/li|/h[1-6]|/blockquote)\b[^>]*>',
+  caseSensitive: false,
+);
+final _tag = RegExp(r'<[^>]*>');
+final _openTag = RegExp(r'<[^>]*$');
+final _spaces = RegExp(r'\s+');
+
+/// Post HTML as one line of plain text, cut at a word to at most [max]
+/// characters with an ellipsis. The recent feed's `substring` may end
+/// mid-tag, so a trailing unclosed tag is dropped too.
+String htmlExcerpt(String html, {int max = 180}) {
+  final text = decodeEntities(
+    html
+        .replaceAll(_blockBreak, ' ')
+        .replaceAll(_tag, '')
+        .replaceAll(_openTag, ''),
+  ).replaceAll(_spaces, ' ').trim();
+  if (text.length <= max) return text;
+  final cut = text.substring(0, max - 1);
+  final space = cut.lastIndexOf(' ');
+  return '${(space > max ~/ 2 ? cut.substring(0, space) : cut).trimRight()}…';
+}
+
 enum MediaKind { image, video, audio, other }
 
 /// A file attached to a post. Pawchive has two kinds:
@@ -891,6 +915,7 @@ class UpdateNotice {
     required this.postId,
     required this.postTitle,
     required this.at,
+    this.excerpt = '',
     this.thumbnailPath,
     this.read = false,
   });
@@ -900,6 +925,9 @@ class UpdateNotice {
   final String postId;
   final String postTitle;
   final DateTime at;
+
+  /// The start of the post's text ([htmlExcerpt]), for the notification.
+  final String excerpt;
   final String? thumbnailPath;
   final bool read;
 
@@ -912,6 +940,7 @@ class UpdateNotice {
     postId: postId,
     postTitle: postTitle,
     at: at,
+    excerpt: excerpt,
     thumbnailPath: thumbnailPath,
     read: true,
   );
@@ -922,6 +951,7 @@ class UpdateNotice {
     postId: _str(json['postId']),
     postTitle: _str(json['postTitle']),
     at: parseDate(json['at']) ?? DateTime.now().toUtc(),
+    excerpt: _str(json['excerpt']),
     thumbnailPath: _optStr(json['thumb']),
     read: _bool(json['read']),
   );
@@ -932,6 +962,7 @@ class UpdateNotice {
     'postId': postId,
     'postTitle': postTitle,
     'at': at.toIso8601String(),
+    'excerpt': excerpt,
     'thumb': thumbnailPath,
     'read': read,
   };

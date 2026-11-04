@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:http/http.dart' as http;
 import 'package:workmanager/workmanager.dart';
 
 import 'api.dart';
+import 'config.dart';
 import 'models.dart';
 import 'store.dart';
 
@@ -114,6 +116,7 @@ class UpdateChecker {
             postId: post.id,
             postTitle: post.title,
             at: post.added ?? post.published ?? now,
+            excerpt: htmlExcerpt(post.content),
             thumbnailPath: post.media.where((m) => m.isImage).firstOrNull?.path,
           ),
       ],
@@ -219,36 +222,135 @@ class Notifier {
     }
   }
 
-  /// One notification per creator, replacing that creator's previous one;
-  /// with [banners], they pop up over the screen.
+  /// Largest picture put in a notification; Android passes it through a
+  /// binder call that fails above about 1 MB.
+  static const _maxPicture = 900 * 1024;
+
+  /// Pause between picture downloads, for the file host's one a second.
+  static const _pictureSpacing = Duration(seconds: 1);
+
+  /// One notification per creator, replacing that creator's previous one,
+  /// showing their newest post: `artist - title`, the start of its text and,
+  /// when it has an image, that image's thumbnail. With [banners], they pop
+  /// up over the screen.
   static Future<void> show(
     List<UpdateNotice> notices, {
     bool banners = false,
+    http.Client? client,
   }) async {
     await init();
     final byCreator = <String, List<UpdateNotice>>{};
     for (final notice in notices) {
       byCreator.putIfAbsent(notice.creator.key, () => []).add(notice);
     }
-    for (final group in byCreator.values) {
-      final creator = group.first.creator;
-      final title = group.length == 1
-          ? 'New post from ${creator.name}'
-          : '${group.length} new posts from ${creator.name}';
-      final body = group.first.postTitle.isEmpty
-          ? 'Tap to see it on ${creator.site.label}'
-          : group.first.postTitle;
-      await _plugin.show(
-        id: creator.key.hashCode & 0x7fffffff,
-        title: title,
-        body: body,
-        notificationDetails: NotificationDetails(
-          android: banners ? _bannerChannel : _channel,
-        ),
-        payload: creator.key,
-      );
+    final fetcher = client ?? http.Client();
+    var fetched = false;
+    try {
+      for (final group in byCreator.values) {
+        final text = notificationText(group);
+        final url = group.first.thumbnailUrl;
+        Uint8List? picture;
+        if (url != null) {
+          if (fetched) await Future<void>.delayed(_pictureSpacing);
+          fetched = true;
+          picture = await _picture(fetcher, url);
+        }
+        final creator = group.first.creator;
+        final id = creator.key.hashCode & 0x7fffffff;
+        try {
+          await _plugin.show(
+            id: id,
+            title: text.title,
+            body: text.body,
+            notificationDetails: NotificationDetails(
+              android: _details(text, picture: picture, banners: banners),
+            ),
+            payload: creator.key,
+          );
+        } on PlatformException {
+          if (picture == null) rethrow;
+          // Android could not take the picture; post the text alone.
+          await _plugin.show(
+            id: id,
+            title: text.title,
+            body: text.body,
+            notificationDetails: NotificationDetails(
+              android: _details(text, banners: banners),
+            ),
+            payload: creator.key,
+          );
+        }
+      }
+    } finally {
+      if (client == null) fetcher.close();
     }
   }
+
+  static AndroidNotificationDetails _details(
+    NotificationText text, {
+    Uint8List? picture,
+    required bool banners,
+  }) {
+    final channel = banners ? _bannerChannel : _channel;
+    final bitmap = picture == null ? null : ByteArrayAndroidBitmap(picture);
+    return AndroidNotificationDetails(
+      channel.channelId,
+      channel.channelName,
+      channelDescription: channel.channelDescription,
+      importance: channel.importance,
+      priority: channel.priority,
+      subText: text.count,
+      largeIcon: bitmap,
+      styleInformation: bitmap == null
+          ? BigTextStyleInformation(text.body, contentTitle: text.title)
+          : BigPictureStyleInformation(
+              bitmap,
+              contentTitle: text.title,
+              summaryText: text.body,
+              hideExpandedLargeIcon: true,
+            ),
+    );
+  }
+
+  /// A thumbnail's bytes, or null when it can't be had quickly or is too big
+  /// for a notification.
+  static Future<Uint8List?> _picture(http.Client client, String url) async {
+    try {
+      final response = await client
+          .get(Uri.parse(url), headers: mediaHeaders)
+          .timeout(const Duration(seconds: 15));
+      final bytes = response.bodyBytes;
+      if (response.statusCode != 200 ||
+          bytes.isEmpty ||
+          bytes.length > _maxPicture) {
+        return null;
+      }
+      return bytes;
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+/// What a push notification for one creator's new posts says.
+typedef NotificationText = ({String title, String body, String? count});
+
+/// `artist - title` and the start of the text of the newest post in
+/// [group] (one creator's notices, newest first), and how many there are
+/// when more than one.
+NotificationText notificationText(List<UpdateNotice> group) {
+  final newest = group.first;
+  final creator = newest.creator;
+  final postTitle = newest.postTitle.trim();
+  return (
+    title: postTitle.isEmpty ? creator.name : '${creator.name} - $postTitle',
+    body: newest.excerpt.isNotEmpty
+        ? newest.excerpt
+        : postTitle.isEmpty
+        ? 'New post on ${creator.site.label}'
+        : 'Tap to see it on ${creator.site.label}',
+    count: group.length > 1 ? '${group.length} new posts' : null,
+  );
 }
 
 /// Schedules the periodic background check.
