@@ -350,13 +350,20 @@ List<DirectMessage> parseDirectMessages(String html) => [
 
 enum PopularPeriod { day, week, month }
 
-/// A page of popular posts and the date each period's current and previous
-/// ranges start on, as the page links them.
+/// The start dates a popular page links for one period: the range shown
+/// (null when it is the page's own period, which isn't linked) and the
+/// ranges before and after it (null at the newest).
+typedef PopularRange = ({String? current, String? previous, String? next});
+
+/// A page of popular posts, the range it covers in words ("October 20,
+/// 2026 - October 27, 2026", "the past 24 hours") and, per period, the
+/// dates it links.
 class PopularPage {
-  const PopularPage(this.posts, this.ranges);
+  const PopularPage(this.posts, this.ranges, {this.label});
 
   final List<Post> posts;
-  final Map<PopularPeriod, ({String? current, String? previous})> ranges;
+  final Map<PopularPeriod, PopularRange> ranges;
+  final String? label;
 }
 
 final _postCard = RegExp(
@@ -379,6 +386,9 @@ final _periodBlock = RegExp(
 );
 final _periodLink = RegExp(
   r'href="/posts/popular\?date=([\d-]+)&(?:amp;)?period=\w+">([^<]*)</a>',
+);
+final _popularLabel = RegExp(
+  r'site-section__heading">[^<]*<span[^>]*>([^<]*)</span>',
 );
 
 @visibleForTesting
@@ -412,20 +422,29 @@ PopularPage parsePopularPage(String html) {
     'weekly': PopularPeriod.week,
     'monthly': PopularPeriod.month,
   };
-  final ranges = <PopularPeriod, ({String? current, String? previous})>{};
+  final ranges = <PopularPeriod, PopularRange>{};
   for (final block in _periodBlock.allMatches(html)) {
     String? current;
     String? previous;
+    String? next;
     for (final link in _periodLink.allMatches(block.group(2)!)) {
-      if (link.group(2)!.contains('prev')) {
+      final text = link.group(2)!;
+      if (text.contains('prev')) {
         previous = link.group(1);
-      } else if (!link.group(2)!.contains('next')) {
+      } else if (text.contains('next')) {
+        next = link.group(1);
+      } else {
         current = link.group(1);
       }
     }
-    ranges[periods[block.group(1)]!] = (current: current, previous: previous);
+    ranges[periods[block.group(1)]!] = (
+      current: current,
+      previous: previous,
+      next: next,
+    );
   }
-  return PopularPage(posts, ranges);
+  final label = _popularLabel.firstMatch(html)?.group(1);
+  return PopularPage(posts, ranges, label: label == null ? null : _text(label));
 }
 
 final _tagCard = RegExp(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:saf_util/saf_util.dart';
 
 import '../core/downloads.dart';
@@ -43,6 +44,7 @@ Future<void> downloadFiles(
       await state.updateSettings(settings);
     }
   }
+  HapticFeedback.lightImpact();
   state.downloads.enqueue(
     post,
     files,
@@ -121,8 +123,8 @@ class _DownloadTile extends StatelessWidget {
       DownloadStatus.queued => 'Waiting',
       DownloadStatus.running =>
         task.total == null
-            ? _size(task.received)
-            : '${_size(task.received)} of ${_size(task.total!)}',
+            ? formatBytes(task.received)
+            : '${formatBytes(task.received)} of ${formatBytes(task.total!)}',
       DownloadStatus.done => 'Saved to ${task.folderName}',
       DownloadStatus.failed => task.error ?? 'Failed',
     };
@@ -183,13 +185,4 @@ class _DownloadTile extends StatelessWidget {
       },
     );
   }
-}
-
-String _size(int bytes) {
-  if (bytes < 1024) return '$bytes B';
-  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
-  if (bytes < 1024 * 1024 * 1024) {
-    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
-  }
-  return '${(bytes / 1024 / 1024 / 1024).toStringAsFixed(2)} GB';
 }

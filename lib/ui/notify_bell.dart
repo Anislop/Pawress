@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/models.dart';
 import '../core/updates.dart';
@@ -51,6 +52,7 @@ class _NotifySheet extends StatelessWidget {
 
   Future<void> _choose(BuildContext context, NotifyLevel? level) async {
     if (level == null) return;
+    HapticFeedback.selectionClick();
     final state = AppScope.read(context);
     if (level == NotifyLevel.push) await Notifier.requestPermission();
     await state.setNotify(creator.key, level);

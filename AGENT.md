@@ -33,36 +33,39 @@ lib/
   main.dart            App root: splash -> onboarding -> home, revealed from the bottom
   core/                No widgets (except updates.dart's Flutter binding); safe for the background isolate
     config.dart        Hosts, user agent, page size
-    models.dart        Creator, Post, MediaFile, Poll, Favorite, Like, Follow + NotifyLevel, Community*, UpdateNotice, PawchiveLink, HashLookup, ... and JSON parsing; threadComments
+    models.dart        Creator, Post, MediaFile, Poll, Favorite, Like, Follow + NotifyLevel, Community*, UpdateNotice, PawchiveLink (+ findUrl), HashLookup, Blocklist, Visit, ... and JSON parsing; threadComments
     api.dart           PawchiveApi (all HTTP); scrapers for DMs, popular posts, tags, tagged posts, similar artists, community chats; random redirects; hash lookup
     file_hash.dart     sha256Hex (streamed, for hash lookup) and isSha256
-    store.dart         Store: SharedPreferencesAsync + secure storage (session cookie); AppSettings
-    backup.dart        Backup file (follows, likes, sign-in sealed with AES-GCM + PBKDF2), mergeFollows / mergeFavorites
-    feeds.dart         Feed (paged ChangeNotifier), OffsetFeed, PopularFeed, FollowingFeed (k-way merge)
-    for_you.dart       ForYouFeed: Taste (follows, likes, favorites), pickSources, takeBest, blendForYou
+    store.dart         Store: SharedPreferencesAsync + secure storage (session cookie); AppSettings, ThemeChoice, DataSaver
+    backup.dart        Backup file (follows, likes, blocklist, sign-in sealed with AES-GCM + PBKDF2), mergeFollows / mergeFavorites
+    feeds.dart         Feed (paged ChangeNotifier), OffsetFeed, PopularFeed (ranges, showRange), FollowingFeed (k-way merge)
+    for_you.dart       ForYouFeed: Taste (follows, likes, favorites, "not interested"), pickSources, takeBest, blendForYou
     creators.dart      CreatorDirectory: cached, throttled profile lookups (feed posts carry only ids)
-    updates.dart       UpdateChecker, pushable, Notifier (local notifications, banner channel), BackgroundUpdates (WorkManager)
+    updates.dart       UpdateChecker, pushable, Notifier (local notifications, banner channel, download progress), DownloadNotification, BackgroundUpdates (WorkManager)
     downloads.dart     DownloadManager queue (2 at once, 1 s apart) writing to a SAF folder via DownloadTarget
     app_update.dart    AppUpdater: GitHub releases check (AppRelease.newest) and install via the pawress/updater channel
-    app_state.dart     AppState: settings, account, follows + bells, likes, favorites, notices + in-app alerts, sync, backup
+    intents.dart       AndroidIntents (pawress/intents channel): links in, shareFile / setAs out, isMetered
+    app_state.dart     AppState: settings, account, follows + bells, likes, favorites, blocklist + dislikes, history, notices + in-app alerts, sync, backup
   ui/
     app_scope.dart     AppScope.of(context) / AppScope.read(context) give AppState
-    theme.dart         Palette (from assets), buildTheme(), BrandMark, SectionLabel
-    widgets.dart       NetImage, CreatorAvatar, ServiceBadge, HtmlContent, FeedView, StatusView, BackToTop, scroll / copy / time helpers
+    theme.dart         Palette (from assets; Plum, AMOLED, Light, Auto), buildTheme(), pinkText, BrandMark, SectionLabel
+    widgets.dart       NetImage, CreatorAvatar, ServiceBadge, HtmlContent, FeedView (hides blocked posts, "caught up" line), StatusView, BackToTop, scroll / copy / time / size helpers
     splash.dart        BooruPlus-style splash + revealFromBottom transition
     onboarding.dart    Four parallax slides (art lags, text leads), notification permission, optional sign-in
     home.dart          HomeScreen (floating SliverAppBar + For You / Following / Popular tabs, Popular's bottom bar) and Sidebar (drawer)
     popular.dart       PopularTab: popular artists (from /creators, sorted on device) and PopularFeed posts
-    post_card.dart     X-style post row, PostActions (comments / thumbs up / favorite), MediaGrid, openPost/openCreator/openViewer helpers
+    post_card.dart     X-style post row, PostActions (comments / thumbs up / favorite), MediaGrid, showPostMenu, block / not interested helpers, openPost/openCreator/openViewer
     notify_bell.dart   NotifyBell (X-style bell beside Following) and showNotifySheet
     comments.dart      CommentList (threaded, left-aligned) and showComments (bottom sheet)
     poll.dart          PollView: a Patreon poll's results as bars
     autoplay.dart      FeedAutoplay (picks the one playing tile) and AutoplayMedia (muted video / GIF tile)
     downloads.dart     downloadFiles() (folder choice + enqueue), pickDownloadFolder(), DownloadsPage
     update_dialog.dart showUpdateDialog: changelog, progress, install errors
-    post_page.dart     Full post: text, poll, actions, media, attachments, tags, comments
-    media_viewer.dart  Full-screen viewer: every image and video in one vertical scroll, zoomable images, Chewie video
-    creator_page.dart  Artist profile (banner, site, links, Follow, Similar artists sheet) + tabs; FollowButton, ArtistTile
+    post_page.dart     Full post: text, poll, actions, media, attachments, tags, newer / older post, comments
+    media_viewer.dart  Full-screen viewer: every image and video in one vertical scroll, zoomable images, Chewie video, share / Set as, data saver
+    share.dart         shareImage / setImageAs (from the image cache), imageCacheBytes, clearImageCache
+    links.dart         openPawchiveLink: a shared or opened pawchive.pw link to a post, artist or tag page
+    creator_page.dart  Artist profile (banner, site, links, Follow, Similar artists sheet, search, block) + tabs; FollowButton, ArtistTile
     creator_media.dart CreatorMediaTab: an artist's images, GIFs and videos as a filterable grid
     tag_page.dart      TagPostsPage: posts with a tag from every artist; openTag
     random_page.dart   RandomPage: a random post or artist, shuffle and gear buttons
@@ -72,6 +75,8 @@ lib/
     settings_cards.dart BooruPlus-style settings panels (SettingsGroup, SettingsSwitchCard, SettingsChoiceCard, ...)
     settings_page.dart  Settings, laid out like BooruPlus's but applied instantly (no save button)
     notification_settings.dart  X-style notification preferences and per-artist bells
+    blocked_page.dart   Blocked artists and tags, "not interested" reset
+    history_page.dart   History: opened posts and artists, swipe to forget
     favorites_page.dart, following_page.dart, notifications_page.dart, search_page.dart, login_page.dart
 test/
   for_you_test.dart         Taste, source sampling, blending and ForYouFeed over fake fetches
@@ -81,10 +86,12 @@ test/
   backup_test.dart          Backup encoding and sealing, merges, AppState likes and their account sync
   update_checker_test.dart  UpdateChecker against a fake Pawchive (MockClient + in-memory prefs)
   downloads_test.dart       DownloadManager: URL resolution, naming, failure and retry (in-memory target)
+  filters_test.dart         Blocklist, Visit, links in shared text, new settings, AppState blocking / not interested / history / Following marker
   app_update_test.dart      Release picking, nightly notes, AppUpdater over a mocked channel and GitHub
-android/app/src/main/kotlin/.../MainActivity.kt   pawress/updater channel: appVersion, installUpdate, notificationSettings
+android/app/src/main/kotlin/.../MainActivity.kt   pawress/updater channel: appVersion, installUpdate, notificationSettings; pawress/intents: initialLink, link, shareFile, setAs, isMetered
 .github/workflows/          ci.yml (PRs, and called by CD) and cd.yml (nightly / tagged releases)
 docs/pawchive-api.md        API reference and quirks
+docs/IMPLEMENTATION1.md     Backlog of ideas not built yet, with where each would go
 ```
 
 ## How things work
@@ -161,6 +168,39 @@ docs/pawchive-api.md        API reference and quirks
   page links to, which `PopularFeed` reads from the first page. Popular
   artists are the `/creators` list sorted on the device. Similar artists are
   scraped from `/{service}/user/{id}/recommended`.
+- **Blocking.** `AppState.blocklist` (artists and tags, stored and backed
+  up) and "not interested" marks (`dislikes`, stored like `Like`s) hide
+  posts in `FeedView` as they change, with no reload; a hidden page that
+  leaves too little to scroll loads more by itself. `AppState.hides(post,
+  creatorKey:)` keeps a blocked artist's posts on their own profile (under
+  a notice) but still hides blocked tags there. Blocking unfollows. For
+  You also skips them before ranking, and dislikes count against the
+  artist and tags in `Taste.score` (half-life 30 days). Popular and tag
+  pages carry no tags, so only blocked artists hide there.
+- **History.** `PostPage` and `CreatorPage` call `recordPost` /
+  `recordCreator`; the newest 300 visits are kept, one per item, posts with
+  their text cut to 400 characters. Opened posts have dimmer text in feeds
+  (`PostCard.dimViewed`). Following draws a "You're caught up" line under
+  the posts newer than `followingSeenAt`, which moves up to the newest post
+  when the user leaves the tab or the app.
+- **Links.** The manifest takes `https://pawchive.pw` VIEW intents (only
+  after "Open supported links" is allowed, since they aren't verified) and
+  shared text. `MainActivity` keeps the launch link until Dart asks
+  (`initialLink`) and sends later ones as `link`; HomeScreen opens them
+  with `openPawchiveLink` (post, artist or `/posts?tag=`).
+- **Post navigation.** `PostPage` shows Newer / Older post from the single
+  post's `prev` / `next` (`next` is older) and replaces itself, except
+  inside Random (`embedded`).
+- **Popular ranges.** `PopularFeed` reads each first page's label and
+  prev / next dates; the arrows under the period chips call `showRange`.
+- **Data saver.** `AppSettings.dataSaver` (off, on metered networks, always;
+  `AndroidIntents.isMetered`, cached 30 s): feed tiles don't autoplay and
+  the viewer keeps thumbnails until "Load full image" (per image, or all
+  from ⋮). Settings shows the image cache size and clears it.
+- **Share and Set as.** The viewer copies the current image out of the
+  image cache (`DefaultCacheManager`, no new download when it was viewed)
+  into `cache/shared/` and hands it to the share sheet or `ACTION_ATTACH_DATA`
+  through the FileProvider, which only exposes that folder and `updates/`.
 - **Sidebar gesture.** `HomeScreen._onOverscroll` opens the drawer when the
   For You tab is dragged past its left edge; the drawer closes with its own
   drag.
@@ -217,6 +257,12 @@ docs/pawchive-api.md        API reference and quirks
   `DownloadManager` on `AppState` streams each file with the Pawress user
   agent into the folder through saf_stream, `<post id>_<name>`; Android
   numbers duplicates. `AppState` shows a snackbar when the queue empties.
+  While the queue has work, `DownloadNotification` (set up in `main.dart`
+  with `notifyDownloads()`) shows a progress notification through
+  flutter_local_notifications' foreground service (`dataSync`), so the
+  queue keeps going in the background; it posts a summary when it ends
+  off screen. The service stops with the task, so swiping Pawress out of
+  recents still ends downloads.
 - **App updates.** Modeled on BooruPlus. CD builds with
   `--build-number=<run number>` and `--dart-define=UPDATE_REPOSITORY=<repo>`
   and attaches `pawress-<version>-<build>.apk` to the `nightly` prerelease
@@ -240,10 +286,14 @@ docs/pawchive-api.md        API reference and quirks
   read with `WebViewCookieManager`, checked against `/account/favorites`, and
   stored in secure storage.
 - **Theme.** `setPalette()` changes the global colors (`canvas`, `panel`,
-  `ink()`, `hairline`) and the whole app rebuilds, as in BooruPlus. The brand
-  colors are constants at the top of `theme.dart`, sampled from
-  `assets/AppIcon.png` and the logos. Use `LogoFlatBlack.png` (pink) on dark
-  surfaces.
+  `ink()`, `hairline`, `pinkText`) and the whole app rebuilds, as in
+  BooruPlus. Light is a pink-paper palette with plum ink; Auto picks Light or
+  Plum from the platform brightness (`PawressApp` rebuilds when it
+  changes). The brand colors are constants at the top of `theme.dart`,
+  sampled from `assets/AppIcon.png` and the logos. `logoAsset` is
+  `LogoFlatBlack.png` (pink) on dark themes and `LogoFlatWhite.png` (plum)
+  on Light. Use `pinkText` rather than `pawPinkLight` for pink text on the
+  canvas; media overlays stay white on black in every theme.
 
 ## Conventions
 
@@ -278,12 +328,9 @@ scheduled.
 ## Not done yet / ideas
 
 - iOS and other platforms (only `android/` exists).
-- Blocked tags and a light theme.
-- A "not interested" signal for For You (only positive likes exist).
-- Downloads run only while the app is open (no foreground service or
-  download notification).
-- Older popular ranges (the page's "prev" links are parsed into
-  `PopularPage.ranges` but not offered in the UI).
+- See [docs/IMPLEMENTATION1.md](docs/IMPLEMENTATION1.md) for the backlog
+  (revisions, flagging, discreet mode, grouped notifications, download all,
+  accessibility, automatic backups, ...).
 - Background checks for many follows make one profile request per follow; a
   batched source (e.g. `/creators` `updated` fields) could replace it.
 - `applicationId` is still `com.example.pawress`.

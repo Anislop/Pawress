@@ -174,7 +174,7 @@ class _ExportDialogState extends State<_ExportDialog> {
             ],
             if (_error != null) ...[
               const SizedBox(height: 10),
-              Text(_error!, style: const TextStyle(color: pawPinkLight)),
+              Text(_error!, style: TextStyle(color: pinkText)),
             ],
           ],
         ),
@@ -294,7 +294,7 @@ class _ImportDialogState extends State<_ImportDialog> {
             ],
             if (_error != null) ...[
               const SizedBox(height: 10),
-              Text(_error!, style: const TextStyle(color: pawPinkLight)),
+              Text(_error!, style: TextStyle(color: pinkText)),
             ],
           ],
         ),

@@ -61,6 +61,7 @@ class _RandomPageState extends State<RandomPage> {
             service: link.service,
             creatorId: link.user,
             postId: post,
+            embedded: true,
           );
         case RandomKind.artist:
           final creator = await api.randomCreator();

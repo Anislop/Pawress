@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/api.dart';
 import '../core/feeds.dart';
@@ -118,31 +119,87 @@ class _PopularTabState extends State<PopularTab>
     };
   }
 
-  Widget _periods() => SingleChildScrollView(
-    scrollDirection: Axis.horizontal,
-    padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
-    child: Row(
-      children: [
-        for (final (period, label) in const [
-          (PopularPeriod.day, 'Today'),
-          (PopularPeriod.week, 'This week'),
-          (PopularPeriod.month, 'This month'),
-        ])
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: ChoiceChip(
-              label: Text(label),
-              selected: _posts.period == period,
-              onSelected: (_) {
-                if (_posts.period == period) return;
-                setState(() => _posts.period = period);
-                _posts.refresh();
-              },
+  Widget _periods() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+        child: Row(
+          children: [
+            for (final (period, label) in const [
+              (PopularPeriod.day, 'Day'),
+              (PopularPeriod.week, 'Week'),
+              (PopularPeriod.month, 'Month'),
+            ])
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ChoiceChip(
+                  label: Text(label),
+                  selected: _posts.period == period,
+                  onSelected: (_) {
+                    if (_posts.period == period && _posts.date == null) {
+                      return;
+                    }
+                    setState(() => _posts.period = period);
+                    _posts.refresh();
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+      ListenableBuilder(listenable: _posts, builder: (context, _) => _range()),
+    ],
+  );
+
+  /// The range shown, with arrows to the one before and after it.
+  Widget _range() {
+    void go(String? date) {
+      HapticFeedback.selectionClick();
+      _posts.showRange(date);
+    }
+
+    final label = _posts.label;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 0, 4, 2),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: 'Earlier',
+            onPressed: _posts.previousDate == null
+                ? null
+                : () => go(_posts.previousDate),
+            icon: const Icon(Icons.chevron_left_rounded),
+          ),
+          Expanded(
+            child: Text(
+              label == null || label.isEmpty
+                  ? ''
+                  : label[0].toUpperCase() + label.substring(1),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: ink(.7), fontWeight: FontWeight.w600),
             ),
           ),
-      ],
-    ),
-  );
+          IconButton(
+            tooltip: 'Later',
+            onPressed: _posts.nextDate == null
+                ? null
+                : () => go(_posts.nextDate),
+            icon: const Icon(Icons.chevron_right_rounded),
+          ),
+          if (_posts.date != null && _posts.nextDate != null)
+            IconButton(
+              tooltip: 'Newest',
+              onPressed: () => go(null),
+              icon: const Icon(Icons.last_page_rounded),
+            ),
+        ],
+      ),
+    );
+  }
 
   Widget _artists(SliverOverlapAbsorberHandle handle) {
     final creators = _creators ??= AppScope.read(context).allCreators();

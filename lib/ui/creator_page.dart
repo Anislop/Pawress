@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/api.dart';
 import '../core/feeds.dart';
@@ -30,6 +33,9 @@ class _CreatorPageState extends State<CreatorPage>
     with SingleTickerProviderStateMixin {
   late Creator _creator = widget.creator;
   late String? _tag = widget.initialTag;
+
+  /// Words the posts are searched for, or null.
+  String? _query;
   late OffsetFeed _posts = _postFeed();
   late final TabController _tabs = TabController(
     length: _tabLabels.length,
@@ -58,9 +64,10 @@ class _CreatorPageState extends State<CreatorPage>
     final c = widget.creator;
     _links = state.api.links(c.service, c.id);
     _refreshProfile();
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => state.markCreatorSeen(c.key),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      state.markCreatorSeen(c.key);
+      state.recordCreator(c);
+    });
   }
 
   Future<void> _refreshProfile() async {
@@ -68,7 +75,11 @@ class _CreatorPageState extends State<CreatorPage>
     try {
       final profile = await state.api.creator(_creator.service, _creator.id);
       state.directory.remember([profile]);
-      if (mounted) setState(() => _creator = profile);
+      if (!mounted) return;
+      setState(() => _creator = profile);
+      if (state.history.firstOrNull?.creator?.key == profile.key) {
+        unawaited(state.recordCreator(profile));
+      }
     } on ApiException {
       // Keep what we were given.
     }
@@ -78,8 +89,15 @@ class _CreatorPageState extends State<CreatorPage>
     final api = AppScope.read(context).api;
     final c = widget.creator;
     final tag = _tag;
+    final query = _query;
     return OffsetFeed(
-      (offset) => api.creatorPosts(c.service, c.id, offset: offset, tag: tag),
+      (offset) => api.creatorPosts(
+        c.service,
+        c.id,
+        offset: offset,
+        tag: tag,
+        query: query,
+      ),
     );
   }
 
@@ -90,6 +108,112 @@ class _CreatorPageState extends State<CreatorPage>
       _posts = _postFeed();
     });
     _tabs.animateTo(0);
+  }
+
+  void _searchFor(String? query) {
+    final words = query?.trim();
+    setState(() {
+      _query = words == null || words.isEmpty ? null : words;
+      _posts.dispose();
+      _posts = _postFeed();
+    });
+    _tabs.animateTo(0);
+  }
+
+  /// Asks what to search this artist's posts for.
+  Future<void> _askSearch() async {
+    final field = TextEditingController(text: _query);
+    final query = await showDialog<String>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: Text('Search ${_creator.name}'),
+        content: TextField(
+          controller: field,
+          autofocus: true,
+          textInputAction: TextInputAction.search,
+          decoration: const InputDecoration(
+            hintText: 'Words in titles and text',
+            prefixIcon: Icon(Icons.search_rounded),
+          ),
+          onSubmitted: (value) => Navigator.pop(dialog, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialog, field.text),
+            child: const Text('Search'),
+          ),
+        ],
+      ),
+    );
+    field.dispose();
+    if (query != null && mounted) _searchFor(query);
+  }
+
+  /// The blocked notice and the active tag and search filters, above the
+  /// posts.
+  Widget? _postsHeader(Creator c) {
+    final blocked = AppScope.of(context).isBlocked(c.key);
+    if (!blocked && _tag == null && _query == null) return null;
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (blocked)
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
+                decoration: BoxDecoration(
+                  color: panel,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: hairline),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.block_rounded, size: 20, color: ink(.6)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'You blocked ${c.name}. Their posts stay out of your '
+                        'feeds.',
+                        style: TextStyle(color: ink(.75)),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => AppScope.read(context).unblock(c.key),
+                      child: const Text('Unblock'),
+                    ),
+                  ],
+                ),
+              ),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (_tag != null)
+                  InputChip(
+                    label: Text('#$_tag'),
+                    onDeleted: () => _filter(null),
+                  ),
+                if (_query != null)
+                  InputChip(
+                    avatar: const Icon(Icons.search_rounded, size: 18),
+                    label: Text(_query!),
+                    onPressed: _askSearch,
+                    onDeleted: () => _searchFor(null),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -192,6 +316,11 @@ class _CreatorPageState extends State<CreatorPage>
                 ),
               ),
               actions: [
+                IconButton(
+                  tooltip: 'Search posts',
+                  onPressed: _askSearch,
+                  icon: const Icon(Icons.search_rounded),
+                ),
                 PopupMenuButton<VoidCallback>(
                   onSelected: (action) => action(),
                   itemBuilder: (_) => [
@@ -207,6 +336,18 @@ class _CreatorPageState extends State<CreatorPage>
                       value: () => copyLink(context, c.pawchiveUrl),
                       child: const Text('Copy link'),
                     ),
+                    AppScope.read(context).isBlocked(c.key)
+                        ? PopupMenuItem(
+                            value: () {
+                              HapticFeedback.lightImpact();
+                              AppScope.read(context).unblock(c.key);
+                            },
+                            child: Text('Unblock ${c.name}'),
+                          )
+                        : PopupMenuItem(
+                            value: () => blockCreator(context, c),
+                            child: Text('Block ${c.name}'),
+                          ),
                   ],
                 ),
               ],
@@ -228,20 +369,8 @@ class _CreatorPageState extends State<CreatorPage>
                   context,
                 ),
                 itemBuilder: (context, post) => PostCard(post),
-                header: _tag == null
-                    ? null
-                    : SliverToBoxAdapter(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: InputChip(
-                              label: Text('#$_tag'),
-                              onDeleted: () => _filter(null),
-                            ),
-                          ),
-                        ),
-                      ),
+                creatorKey: c.key,
+                header: _postsHeader(c),
               ),
             ),
             CreatorMediaTab(creator: widget.creator),
@@ -574,7 +703,10 @@ class FollowButton extends StatelessWidget {
           padding: padding,
           visualDensity: VisualDensity.compact,
         ),
-        onPressed: () => state.follow(creator),
+        onPressed: () {
+          HapticFeedback.lightImpact();
+          state.follow(creator);
+        },
         child: const Text('Follow'),
       );
     }
@@ -605,7 +737,9 @@ class FollowButton extends StatelessWidget {
             ],
           ),
         );
-        if (confirmed == true) await state.unfollow(creator);
+        if (confirmed != true) return;
+        HapticFeedback.mediumImpact();
+        await state.unfollow(creator);
       },
       child: const Text('Following'),
     );

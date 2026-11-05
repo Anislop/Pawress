@@ -8,6 +8,7 @@ import 'backup.dart';
 import 'creators.dart';
 import 'downloads.dart';
 import 'for_you.dart';
+import 'intents.dart';
 import 'models.dart';
 import 'store.dart';
 import 'updates.dart';
@@ -22,12 +23,22 @@ class AppState extends ChangeNotifier {
     this.api.onUnauthorized = () => unawaited(_expireSession());
     directory = CreatorDirectory(this.api);
     downloads = DownloadManager(this.api)
-      ..onIdle = (saved, failed) => _say(
-        failed == 0
-            ? 'Saved ${_files(saved)}.'
-            : 'Saved ${_files(saved)}; ${_files(failed)} failed.',
-      );
+      ..onIdle = (saved, failed) {
+        _downloadNotification?.finish(saved, failed);
+        _say(
+          failed == 0
+              ? 'Saved ${_files(saved)}.'
+              : 'Saved ${_files(saved)}; ${_files(failed)} failed.',
+        );
+      };
   }
+
+  DownloadNotification? _downloadNotification;
+
+  /// Shows download progress in a notification that keeps the queue running
+  /// in the background. Left out of tests, which have no plugins.
+  void notifyDownloads() =>
+      _downloadNotification ??= DownloadNotification(downloads);
 
   final Store store;
   final PawchiveApi api;
@@ -47,6 +58,22 @@ class AppState extends ChangeNotifier {
   List<Like> likes = [];
   Set<String> _favoriteKeys = {};
   Set<String> _likeKeys = {};
+
+  /// Blocked artists and tags, left out of feeds.
+  Blocklist blocklist = Blocklist();
+
+  /// "Not interested" marks, newest first: the post is hidden and its
+  /// artist and tags count against For You.
+  List<Like> dislikes = [];
+  Set<String> _dislikeKeys = {};
+
+  /// Opened posts and artists, newest first.
+  List<Visit> history = [];
+  Set<String> _viewedPosts = {};
+
+  /// The newest Following post seen when the user last left that tab; the
+  /// feed marks where newer posts end.
+  DateTime? followingSeenAt;
 
   /// A foreground update check is running.
   bool checking = false;
@@ -73,6 +100,10 @@ class AppState extends ChangeNotifier {
     _setFavorites(await store.favorites());
     _setLikes(await store.likes());
     notices = await store.notices();
+    blocklist = await store.blocklist();
+    _setDislikes(await store.dislikes());
+    _setHistory(await store.history());
+    followingSeenAt = await store.followingSeenAt();
     directory.remember(follows.map((f) => f.creator));
     initialized = true;
     notifyListeners();
@@ -375,8 +406,144 @@ class AppState extends ChangeNotifier {
     follows: follows,
     likes: likes,
     favorites: favorites,
+    dislikes: dislikes,
+    blocklist: blocklist,
     followingShare: settings.forYouMix.followingShare,
   );
+
+  // Blocking and "not interested".
+
+  /// Whether feeds leave [post] out. On [creatorKey]'s own profile their
+  /// posts still show, but blocked tags don't.
+  bool hides(Post post, {String? creatorKey}) =>
+      _dislikeKeys.contains(post.key) ||
+      (post.creatorKey == creatorKey
+          ? blocklist.blocksTags(post)
+          : blocklist.hides(post));
+
+  bool isBlocked(String creatorKey) => blocklist.blocksCreator(creatorKey);
+
+  /// Blocks [creator] and unfollows them, as blocking on X does.
+  Future<void> block(Creator creator) async {
+    await _saveBlocklist(blocklist.withCreator(creator));
+    if (isFollowing(creator.key)) await unfollow(creator);
+  }
+
+  Future<void> unblock(String creatorKey) =>
+      _saveBlocklist(blocklist.withoutCreator(creatorKey));
+
+  Future<void> blockTag(String tag) => _saveBlocklist(blocklist.withTag(tag));
+
+  Future<void> unblockTag(String tag) =>
+      _saveBlocklist(blocklist.withoutTag(tag));
+
+  Future<void> _saveBlocklist(Blocklist value) async {
+    blocklist = value;
+    notifyListeners();
+    await store.saveBlocklist(value);
+  }
+
+  bool isDisliked(Post post) => _dislikeKeys.contains(post.key);
+
+  /// Hides [post] and teaches For You to show less like it. A like on the
+  /// same post goes, since the two contradict.
+  Future<void> notInterested(Post post) async {
+    if (isDisliked(post)) return;
+    _setDislikes([Like.of(post, DateTime.now().toUtc()), ...dislikes]);
+    if (isLiked(post)) {
+      _setLikes(likes.where((like) => like.key != post.key).toList());
+      await store.saveLikes(likes);
+    }
+    notifyListeners();
+    await store.saveDislikes(dislikes);
+  }
+
+  Future<void> undoNotInterested(Post post) async {
+    if (!isDisliked(post)) return;
+    _setDislikes(dislikes.where((like) => like.key != post.key).toList());
+    notifyListeners();
+    await store.saveDislikes(dislikes);
+  }
+
+  Future<void> clearDislikes() async {
+    _setDislikes([]);
+    notifyListeners();
+    await store.saveDislikes(dislikes);
+  }
+
+  void _setDislikes(List<Like> value) {
+    dislikes = value;
+    _dislikeKeys = {for (final like in value) like.key};
+  }
+
+  // History.
+
+  bool wasViewed(Post post) => _viewedPosts.contains(post.key);
+
+  /// Records an opened post. Its text is cut short: the post page fetches
+  /// the full post anyway, and History only shows a preview.
+  Future<void> recordPost(Post post) => _record(
+    Visit.post(
+      post.copyWith(content: htmlExcerpt(post.content, max: 400)),
+      DateTime.now().toUtc(),
+    ),
+  );
+
+  Future<void> recordCreator(Creator creator) =>
+      _record(Visit.creator(creator, DateTime.now().toUtc()));
+
+  Future<void> _record(Visit visit) async {
+    if (!settings.keepHistory) return;
+    _setHistory([
+      visit,
+      for (final old in history)
+        if (old.key != visit.key) old,
+    ]);
+    notifyListeners();
+    await store.saveHistory(history);
+  }
+
+  Future<void> removeVisit(Visit visit) async {
+    _setHistory([
+      for (final old in history)
+        if (old.key != visit.key) old,
+    ]);
+    notifyListeners();
+    await store.saveHistory(history);
+  }
+
+  Future<void> clearHistory() async {
+    _setHistory([]);
+    notifyListeners();
+    await store.saveHistory(history);
+  }
+
+  void _setHistory(List<Visit> value) {
+    history = value.take(Store.maxHistory).toList();
+    _viewedPosts = {
+      for (final visit in history)
+        if (visit.post != null) visit.post!.key,
+    };
+  }
+
+  /// Moves the Following marker up to [newest], the newest post loaded
+  /// there, once the user has seen the tab.
+  Future<void> markFollowingSeen(DateTime newest) async {
+    final seen = followingSeenAt;
+    if (seen != null && !newest.isAfter(seen)) return;
+    followingSeenAt = newest;
+    notifyListeners();
+    await store.saveFollowingSeenAt(newest);
+  }
+
+  // Data saver.
+
+  /// Whether images and videos should hold back right now.
+  Future<bool> savingData() async => switch (settings.dataSaver) {
+    DataSaver.off => false,
+    DataSaver.always => true,
+    DataSaver.mobile => await AndroidIntents.isMetered(),
+  };
 
   // Backup.
 
@@ -386,6 +553,7 @@ class AppState extends ChangeNotifier {
     follows: follows,
     favorites: favorites,
     likes: likes,
+    blocklist: blocklist,
     credentials: password == null || password.isEmpty || !signedIn
         ? null
         : await SealedCredentials.seal(
@@ -408,6 +576,8 @@ class AppState extends ChangeNotifier {
     _setFavorites(mergeFavorites(favorites, backup.favorites));
     _setLikes(mergeLikes(likes, backup.likes));
     await store.saveLikes(likes);
+    blocklist = blocklist.merge(backup.blocklist);
+    await store.saveBlocklist(blocklist);
     directory.remember(follows.map((f) => f.creator));
     await _saveFollows();
     await _saveFavorites();

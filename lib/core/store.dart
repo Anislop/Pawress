@@ -5,7 +5,29 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models.dart';
 
-enum ThemeChoice { plum, amoled }
+enum ThemeChoice {
+  plum('Plum'),
+  amoled('AMOLED'),
+  light('Light'),
+
+  /// Light or Plum, following Android's dark theme setting.
+  system('Auto');
+
+  const ThemeChoice(this.label);
+
+  final String label;
+}
+
+/// When images and videos hold back to save mobile data.
+enum DataSaver {
+  off('Off'),
+  mobile('Mobile data'),
+  always('Always');
+
+  const DataSaver(this.label);
+
+  final String label;
+}
 
 /// What the sidebar's Random picks.
 enum RandomKind { post, artist }
@@ -40,6 +62,8 @@ class AppSettings {
     this.askDownloadFolder = false,
     this.checkUpdates = true,
     this.randomKind,
+    this.dataSaver = DataSaver.off,
+    this.keepHistory = true,
   });
 
   final ThemeChoice theme;
@@ -77,6 +101,13 @@ class AppSettings {
   /// Null until Random is first opened and asks.
   final RandomKind? randomKind;
 
+  /// While saving data, feed videos and GIFs don't autoplay and the viewer
+  /// shows thumbnails until a full file is asked for.
+  final DataSaver dataSaver;
+
+  /// Record opened posts and artists in History.
+  final bool keepHistory;
+
   static const intervals = [15, 30, 60, 180, 360, 720];
 
   AppSettings copyWith({
@@ -93,6 +124,8 @@ class AppSettings {
     bool? askDownloadFolder,
     bool? checkUpdates,
     RandomKind? randomKind,
+    DataSaver? dataSaver,
+    bool? keepHistory,
   }) => AppSettings(
     theme: theme ?? this.theme,
     notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
@@ -111,6 +144,8 @@ class AppSettings {
     askDownloadFolder: askDownloadFolder ?? this.askDownloadFolder,
     checkUpdates: checkUpdates ?? this.checkUpdates,
     randomKind: randomKind ?? this.randomKind,
+    dataSaver: dataSaver ?? this.dataSaver,
+    keepHistory: keepHistory ?? this.keepHistory,
   );
 
   factory AppSettings.fromJson(Map<String, dynamic> json) => AppSettings(
@@ -130,6 +165,8 @@ class AppSettings {
     askDownloadFolder: json['askDownloadFolder'] as bool? ?? false,
     checkUpdates: json['checkUpdates'] as bool? ?? true,
     randomKind: RandomKind.values.asNameMap()[json['randomKind']],
+    dataSaver: DataSaver.values.asNameMap()[json['dataSaver']] ?? DataSaver.off,
+    keepHistory: json['keepHistory'] as bool? ?? true,
   );
 
   Map<String, dynamic> toJson() => {
@@ -146,6 +183,8 @@ class AppSettings {
     'askDownloadFolder': askDownloadFolder,
     'checkUpdates': checkUpdates,
     'randomKind': randomKind?.name,
+    'dataSaver': dataSaver.name,
+    'keepHistory': keepHistory,
   };
 }
 
@@ -168,12 +207,19 @@ class Store {
   static const _notices = 'notices';
   static const _accountName = 'accountName';
   static const _session = 'session';
+  static const _blocklist = 'blocklist';
+  static const _dislikes = 'dislikes';
+  static const _history = 'history';
+  static const _followingSeen = 'followingSeenAt';
 
   /// The newest notices kept; older ones are dropped.
   static const maxNotices = 200;
 
   /// The newest likes kept; older taste fades out of For You anyway.
   static const maxLikes = 1000;
+
+  /// The newest History entries kept.
+  static const maxHistory = 300;
 
   Future<bool> onboarded() async => await _prefs.getBool(_onboarded) ?? false;
   Future<void> setOnboarded(bool value) => _prefs.setBool(_onboarded, value);
@@ -209,6 +255,53 @@ class Store {
     _likes,
     jsonEncode([for (final like in likes.take(maxLikes)) like.toJson()]),
   );
+
+  Future<Blocklist> blocklist() async {
+    final raw = await _prefs.getString(_blocklist);
+    if (raw == null) return Blocklist();
+    try {
+      return Blocklist.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    } catch (_) {
+      return Blocklist();
+    }
+  }
+
+  Future<void> saveBlocklist(Blocklist blocklist) =>
+      _prefs.setString(_blocklist, jsonEncode(blocklist.toJson()));
+
+  /// "Not interested" marks, kept in the same shape as likes.
+  Future<List<Like>> dislikes() async => _list(_dislikes, Like.fromJson);
+
+  Future<void> saveDislikes(List<Like> dislikes) => _prefs.setString(
+    _dislikes,
+    jsonEncode([for (final like in dislikes.take(maxLikes)) like.toJson()]),
+  );
+
+  Future<List<Visit>> history() async {
+    final raw = await _prefs.getString(_history);
+    if (raw == null) return [];
+    try {
+      return [
+        for (final item in jsonDecode(raw) as List)
+          if (item is Map<String, dynamic>) ?Visit.tryParse(item),
+      ];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> saveHistory(List<Visit> history) => _prefs.setString(
+    _history,
+    jsonEncode([for (final visit in history.take(maxHistory)) visit.toJson()]),
+  );
+
+  /// The newest Following post the user had scrolled past when they last
+  /// left that tab.
+  Future<DateTime?> followingSeenAt() async =>
+      parseDate(await _prefs.getString(_followingSeen));
+
+  Future<void> saveFollowingSeenAt(DateTime value) =>
+      _prefs.setString(_followingSeen, value.toIso8601String());
 
   Future<List<UpdateNotice>> notices() async =>
       _list(_notices, UpdateNotice.fromJson);

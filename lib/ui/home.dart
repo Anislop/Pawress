@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/feeds.dart';
 import '../core/for_you.dart';
+import '../core/intents.dart';
 import '../core/models.dart';
 import '../core/updates.dart';
 import 'app_scope.dart';
@@ -13,6 +15,8 @@ import 'downloads.dart';
 import 'favorites_page.dart';
 import 'following_page.dart';
 import 'hash_lookup_page.dart';
+import 'history_page.dart';
+import 'links.dart';
 import 'login_page.dart';
 import 'notifications_page.dart';
 import 'popular.dart';
@@ -36,6 +40,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen>
     with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+  static const _followingTab = 1;
   static const _popularTab = 2;
 
   final _scaffold = GlobalKey<ScaffoldState>();
@@ -48,6 +53,7 @@ class _HomeScreenState extends State<HomeScreen>
   late final ForYouFeed _forYou;
   late final FollowingFeed _following;
   StreamSubscription<String>? _taps;
+  StreamSubscription<String>? _links;
   String _followSignature = '';
 
   /// Looks for notices the background check wrote while the app is open.
@@ -66,6 +72,10 @@ class _HomeScreenState extends State<HomeScreen>
     _taps = Notifier.taps.stream.listen(_openFromNotification);
     Notifier.launchPayload().then((key) {
       if (key != null) _openFromNotification(key);
+    });
+    _links = AndroidIntents.links.stream.listen(_openLink);
+    AndroidIntents.initialLink().then((text) {
+      if (text != null) _openLink(text);
     });
     unawaited(_checkForUpdate());
     _startPolling();
@@ -97,6 +107,7 @@ class _HomeScreenState extends State<HomeScreen>
     AppScope.read(context).removeListener(_onState);
     WidgetsBinding.instance.removeObserver(this);
     _taps?.cancel();
+    _links?.cancel();
     _poll?.cancel();
     _tabs.dispose();
     _forYou.dispose();
@@ -112,14 +123,30 @@ class _HomeScreenState extends State<HomeScreen>
       _startPolling();
     } else if (state == AppLifecycleState.paused) {
       _poll?.cancel();
+      if (_tab == _followingTab) _markFollowingSeen();
     }
   }
 
   void _onTab() {
-    if (_tabs.index != _tab) setState(() => _tab = _tabs.index);
+    if (_tabs.index == _tab) return;
+    if (_tab == _followingTab) _markFollowingSeen();
+    setState(() => _tab = _tabs.index);
   }
 
-  void _scrollToTop() => scrollNestedToTop(_nested.currentState);
+  /// Leaving Following moves its "caught up" line to the newest post there.
+  void _markFollowingSeen() {
+    final newest = _following.posts.firstOrNull?.date;
+    if (newest != null) AppScope.read(context).markFollowingSeen(newest);
+  }
+
+  void _openLink(String text) {
+    if (mounted) openPawchiveLink(context, text);
+  }
+
+  void _scrollToTop() {
+    HapticFeedback.selectionClick();
+    scrollNestedToTop(_nested.currentState);
+  }
 
   /// Tapping the tab that's already open scrolls it back to the top.
   void _onTabTap(int index) {
@@ -129,6 +156,7 @@ class _HomeScreenState extends State<HomeScreen>
   void _onSection(int index) {
     final section = PopularSection.values[index];
     if (section == _section) return _scrollToTop();
+    HapticFeedback.selectionClick();
     setState(() => _section = section);
   }
 
@@ -215,6 +243,10 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _openFromNotification(String key) {
     if (!mounted) return;
+    if (key == Notifier.downloadsPayload) {
+      _push((_) => const DownloadsPage());
+      return;
+    }
     final follow = AppScope.read(context).followOf(key);
     if (follow == null) {
       _push((_) => const NotificationsPage());
@@ -322,6 +354,7 @@ class _HomeScreenState extends State<HomeScreen>
             ),
             _Tab(
               feed: _following,
+              marksNew: true,
               empty: StatusView(
                 icon: Icons.person_add_alt_1_rounded,
                 title: 'Follow artists to fill this tab',
@@ -339,10 +372,13 @@ class _HomeScreenState extends State<HomeScreen>
 }
 
 class _Tab extends StatefulWidget {
-  const _Tab({required this.feed, required this.empty});
+  const _Tab({required this.feed, required this.empty, this.marksNew = false});
 
   final Feed feed;
   final Widget empty;
+
+  /// Draws the "caught up" line at [AppState.followingSeenAt].
+  final bool marksNew;
 
   @override
   State<_Tab> createState() => _TabState();
@@ -371,6 +407,7 @@ class _TabState extends State<_Tab> with AutomaticKeepAliveClientMixin {
       overlapHandle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
       itemBuilder: (context, post) => PostCard(post),
       empty: widget.empty,
+      newSince: widget.marksNew ? state.followingSeenAt : null,
     );
   }
 }
@@ -508,6 +545,11 @@ class Sidebar extends StatelessWidget {
                     icon: Icons.favorite_border_rounded,
                     label: 'Favorites',
                     onTap: () => open((_) => const FavoritesPage()),
+                  ),
+                  _SidebarItem(
+                    icon: Icons.history_rounded,
+                    label: 'History',
+                    onTap: () => open((_) => const HistoryPage()),
                   ),
                   _SidebarItem(
                     icon: Icons.notifications_none_rounded,

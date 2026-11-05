@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../core/app_state.dart';
 import '../core/config.dart';
 import '../core/store.dart';
 import 'app_scope.dart';
 import 'backup.dart';
+import 'blocked_page.dart';
 import 'downloads.dart';
+import 'history_page.dart';
 import 'login_page.dart';
 import 'notification_settings.dart';
 import 'settings_cards.dart';
+import 'share.dart';
 import 'theme.dart';
 import 'update_dialog.dart';
 import 'widgets.dart';
@@ -155,6 +159,37 @@ class SettingsPage extends StatelessWidget {
                   child: const Text('Reset'),
                 ),
               ),
+              SettingsTile(
+                icon: Icons.block_rounded,
+                title: 'Blocked artists and tags',
+                subtitle: _blockedSummary(state),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const BlockedPage()),
+                ),
+              ),
+            ],
+          ),
+          const SettingsSection('History'),
+          SettingsGroup(
+            children: [
+              SettingsSwitch(
+                icon: Icons.history_rounded,
+                title: 'Keep history',
+                subtitle: 'Remember the posts and artists you open.',
+                value: settings.keepHistory,
+                onChanged: (value) =>
+                    update(settings.copyWith(keepHistory: value)),
+              ),
+              SettingsTile(
+                icon: Icons.manage_history_rounded,
+                title: 'History',
+                subtitle: state.history.length == 1
+                    ? '1 entry'
+                    : '${state.history.length} entries',
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const HistoryPage()),
+                ),
+              ),
             ],
           ),
           const SettingsSection('Appearance'),
@@ -164,12 +199,12 @@ class SettingsPage extends StatelessWidget {
             subtitle: switch (settings.theme) {
               ThemeChoice.plum => 'The Pawress dark palette.',
               ThemeChoice.amoled => 'Pure black, easy on OLED screens.',
+              ThemeChoice.light => 'Soft pink paper for bright rooms.',
+              ThemeChoice.system =>
+                "Light or Plum, following Android's dark theme.",
             },
             values: ThemeChoice.values,
-            label: (choice) => switch (choice) {
-              ThemeChoice.plum => 'Plum',
-              ThemeChoice.amoled => 'AMOLED',
-            },
+            label: (choice) => choice.label,
             selected: settings.theme,
             onChanged: (choice) => update(settings.copyWith(theme: choice)),
           ),
@@ -183,6 +218,25 @@ class SettingsPage extends StatelessWidget {
             onChanged: (value) =>
                 update(settings.copyWith(autoplayVideos: value)),
           ),
+          const SettingsSection('Data and storage'),
+          SettingsChoiceCard<DataSaver>(
+            icon: Icons.data_saver_on_rounded,
+            title: 'Data saver',
+            subtitle: switch (settings.dataSaver) {
+              DataSaver.off => 'Images and videos load as usual.',
+              DataSaver.mobile =>
+                'On mobile data, feeds don\'t autoplay and the viewer shows '
+                    'thumbnails until you ask for the full image.',
+              DataSaver.always =>
+                'Feeds never autoplay and the viewer shows thumbnails until '
+                    'you ask for the full image.',
+            },
+            values: DataSaver.values,
+            label: (saver) => saver.label,
+            selected: settings.dataSaver,
+            onChanged: (saver) => update(settings.copyWith(dataSaver: saver)),
+          ),
+          const _CacheCard(),
           const SettingsSection('Downloads'),
           SettingsGroup(
             children: [
@@ -225,8 +279,9 @@ class SettingsPage extends StatelessWidget {
           SettingsActionsCard(
             text:
                 'Save your follows (with their notification settings), '
-                'favorites and likes to a readable JSON file, or restore them '
-                'from one. Importing adds to what is already here. With a '
+                'favorites, likes and blocks to a readable JSON file, or '
+                'restore them from one. Importing adds to what is already '
+                'here. With a '
                 'password, your Pawchive sign-in is included, encrypted.',
             actions: [
               OutlinedButton.icon(
@@ -278,6 +333,17 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
+  static String _blockedSummary(AppState state) {
+    final blocklist = state.blocklist;
+    if (blocklist.isEmpty) return 'Hide artists and tags from your feeds';
+    String count(int n, String one) => n == 1 ? '1 $one' : '$n ${one}s';
+    return [
+      if (blocklist.creators.isNotEmpty)
+        count(blocklist.creators.length, 'artist'),
+      if (blocklist.tags.isNotEmpty) count(blocklist.tags.length, 'tag'),
+    ].join(', ');
+  }
+
   static Future<void> _confirmClearLikes(BuildContext context) async {
     final state = AppScope.read(context);
     final confirmed = await showDialog<bool>(
@@ -303,6 +369,54 @@ class SettingsPage extends StatelessWidget {
     );
     if (confirmed == true) await state.clearLikes();
   }
+}
+
+/// How much the image cache holds, with a button to empty it.
+class _CacheCard extends StatefulWidget {
+  const _CacheCard();
+
+  @override
+  State<_CacheCard> createState() => _CacheCardState();
+}
+
+class _CacheCardState extends State<_CacheCard> {
+  late Future<int> _size = imageCacheBytes();
+  bool _clearing = false;
+
+  Future<void> _clear() async {
+    setState(() => _clearing = true);
+    try {
+      await clearImageCache();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _clearing = false;
+          _size = imageCacheBytes();
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<int>(
+    future: _size,
+    builder: (context, snapshot) => SettingsGroup(
+      children: [
+        SettingsTile(
+          icon: Icons.storage_rounded,
+          title: 'Image cache',
+          subtitle: snapshot.hasData
+              ? '${formatBytes(snapshot.data!)} of thumbnails, avatars and '
+                    'viewed images'
+              : 'Measuring…',
+          trailing: TextButton(
+            onPressed: _clearing || (snapshot.data ?? 0) == 0 ? null : _clear,
+            child: Text(_clearing ? 'Clearing…' : 'Clear'),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 /// The installed version and build, with "Check now" for a newer release.

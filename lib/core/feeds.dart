@@ -87,33 +87,67 @@ class OffsetFeed extends Feed {
   List<Post> transform(List<Post> page) => page;
 }
 
-/// The site's most favorited posts over a [period]. The last 24 hours need
-/// no date; a week or month needs the range start the site links to, which
-/// is read from the first page once.
+/// The site's most favorited posts over a [period]. The newest range needs
+/// the start date the site links to (none for the last 24 hours), read from
+/// a first page once; older and newer ranges come from each page's own
+/// links, so [showRange] steps through them.
 class PopularFeed extends Feed {
-  PopularFeed(this._api, {this.period = PopularPeriod.day});
+  PopularFeed(this._api);
 
   final PawchiveApi _api;
-  PopularPeriod period;
-  Map<PopularPeriod, ({String? current, String? previous})>? _ranges;
+  PopularPeriod _period = PopularPeriod.day;
+  Map<PopularPeriod, PopularRange>? _ranges;
   int _offset = 0;
 
+  /// The range's start date, or null for the newest.
+  String? date;
+
+  /// The shown range in words and the dates of the ranges either side,
+  /// once its first page has loaded.
+  String? label;
+  String? previousDate;
+  String? nextDate;
+
+  PopularPeriod get period => _period;
+
+  /// Switches period at its newest range; call [refresh] after.
+  set period(PopularPeriod value) {
+    _period = value;
+    date = null;
+  }
+
+  /// Loads the range starting on [start], or the newest with null.
+  Future<void> showRange(String? start) {
+    date = start;
+    return refresh();
+  }
+
   @override
-  void reset() => _offset = 0;
+  void reset() {
+    _offset = 0;
+    label = null;
+    previousDate = null;
+    nextDate = null;
+  }
 
   @override
   Future<List<Post>> fetchNext() async {
-    String? date;
-    if (period != PopularPeriod.day) {
+    var start = date;
+    if (start == null && period != PopularPeriod.day) {
       _ranges ??= (await _api.popularPosts()).ranges;
-      date = _ranges![period]?.current;
-      if (date == null) return const [];
+      start = _ranges![period]?.current;
+      if (start == null) return const [];
     }
     final page = await _api.popularPosts(
       period: period,
-      date: date,
+      date: start,
       offset: _offset,
     );
+    if (_offset == 0) {
+      label = page.label;
+      previousDate = page.ranges[period]?.previous;
+      nextDate = page.ranges[period]?.next;
+    }
     _offset += pageSize;
     if (page.posts.length < pageSize) done = true;
     return page.posts;

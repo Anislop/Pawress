@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/api.dart';
 import '../core/models.dart';
@@ -210,7 +211,7 @@ class _MessageRow extends StatelessWidget {
                     Flexible(
                       child: Text(
                         embed.title.isEmpty ? embed.url : embed.title,
-                        style: const TextStyle(color: pawPinkLight),
+                        style: TextStyle(color: pinkText),
                       ),
                     ),
                   ],
@@ -279,7 +280,7 @@ class _MessageRow extends StatelessWidget {
                           m.author.isEmpty ? 'Unknown' : m.author,
                           style: TextStyle(
                             fontWeight: FontWeight.w700,
-                            color: m.fromCreator ? pawPinkLight : ink(.94),
+                            color: m.fromCreator ? pinkText : ink(.94),
                           ),
                         ),
                         if (m.fromCreator)
@@ -364,7 +365,11 @@ class _ImageScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: Colors.black,
-    appBar: AppBar(backgroundColor: Colors.black),
+    appBar: AppBar(
+      backgroundColor: Colors.black,
+      foregroundColor: Colors.white,
+      systemOverlayStyle: SystemUiOverlayStyle.light,
+    ),
     body: InteractiveViewer(
       maxScale: 6,
       child: Center(

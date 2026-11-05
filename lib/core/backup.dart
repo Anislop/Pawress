@@ -19,19 +19,23 @@ class BackupException implements Exception {
 /// password, the Pawchive sign-in sealed with it. Follows and likes stay
 /// readable so the file is useful without the password.
 class Backup {
-  const Backup({
+  Backup({
     required this.follows,
     required this.favorites,
     this.likes = const [],
+    Blocklist? blocklist,
     this.credentials,
     this.exportedAt,
-  });
+  }) : blocklist = blocklist ?? Blocklist();
 
   final List<Follow> follows;
   final List<Favorite> favorites;
 
   /// Thumbs-up likes, which teach For You.
   final List<Like> likes;
+
+  /// Blocked artists and tags.
+  final Blocklist blocklist;
   final SealedCredentials? credentials;
   final DateTime? exportedAt;
 
@@ -45,6 +49,7 @@ class Backup {
     'follows': [for (final follow in follows) follow.toJson()],
     'favorites': [for (final favorite in favorites) favorite.toJson()],
     'likes': [for (final like in likes) like.toJson()],
+    if (!blocklist.isEmpty) 'blocklist': blocklist.toJson(),
     if (credentials != null) 'credentials': credentials!.toJson(),
   });
 
@@ -70,10 +75,14 @@ class Backup {
     ];
     try {
       final credentials = map['credentials'];
+      final blocklist = map['blocklist'];
       return Backup(
         follows: list('follows', Follow.fromJson),
         favorites: list('favorites', Favorite.fromJson),
         likes: list('likes', Like.fromJson),
+        blocklist: blocklist is Map<String, dynamic>
+            ? Blocklist.fromJson(blocklist)
+            : null,
         credentials: credentials is Map<String, dynamic>
             ? SealedCredentials.fromJson(credentials)
             : null,

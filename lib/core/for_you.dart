@@ -14,19 +14,29 @@ typedef ForYouSignals = ({
   List<Like> likes,
   List<Favorite> favorites,
 
+  /// "Not interested" marks, which push artists and tags down.
+  List<Like> dislikes,
+
+  /// Never shown, so never picked.
+  Blocklist blocklist,
+
   /// The share of a page drawn from followed and liked artists.
   double followingShare,
 });
 
 /// The user's taste as weights: per creator, per site and per tag. Follows
 /// count fully; thumbs-up likes and favorites fade with age so the feed
-/// follows what the user is into now.
+/// follows what the user is into now. "Not interested" marks fade the same
+/// way and count against an artist and tags.
 class Taste {
   Taste._({
     required this.creators,
     required this.services,
     required this.tags,
     required this.followed,
+    this.avoidCreators = const {},
+    this.avoidTags = const {},
+    this.disliked = const {},
   });
 
   factory Taste.from(ForYouSignals signals, {DateTime? now}) {
@@ -62,11 +72,23 @@ class Taste {
         add(tags, _tagKey(tag), .75 * weight);
       }
     }
+    final avoidCreators = <String, double>{};
+    final avoidTags = <String, double>{};
+    for (final dislike in signals.dislikes) {
+      final weight = fade(dislike.likedAt, _likeHalfLifeDays);
+      add(avoidCreators, dislike.creatorKey, 2 * weight);
+      for (final tag in dislike.tags) {
+        add(avoidTags, _tagKey(tag), weight);
+      }
+    }
     return Taste._(
       creators: creators,
       services: _normalized(services),
       tags: _normalized(tags),
       followed: {for (final follow in signals.follows) follow.key},
+      avoidCreators: avoidCreators,
+      avoidTags: avoidTags,
+      disliked: {for (final dislike in signals.dislikes) dislike.key},
     );
   }
 
@@ -87,14 +109,26 @@ class Taste {
   final Map<String, double> tags;
   final Set<String> followed;
 
+  /// Faded "not interested" weight per creator key and per tag.
+  final Map<String, double> avoidCreators;
+  final Map<String, double> avoidTags;
+
+  /// Post keys marked "not interested".
+  final Set<String> disliked;
+
   bool get isEmpty => creators.isEmpty;
 
   /// How much the user likes [creatorKey], with diminishing returns so one
   /// artist cannot take over the feed.
   double affinity(String creatorKey) => log(1 + (creators[creatorKey] ?? 0));
 
+  /// How strongly the user turned away from [creatorKey], up to 2.5.
+  double aversion(String creatorKey) =>
+      min(2.5, avoidCreators[creatorKey] ?? 0);
+
   /// Higher is better: freshness (up to 2) plus taste for the creator, the
-  /// post's tags and its site.
+  /// post's tags and its site, minus what "not interested" counts against
+  /// them.
   double score(Post post, DateTime now) {
     final date = post.date;
     final hours = date == null
@@ -102,13 +136,17 @@ class Taste {
         : max(0, now.difference(date).inMinutes) / 60;
     final fresh = pow(.5, hours / _freshHalfLifeHours);
     var tagMatch = 0.0;
+    var tagAvoid = 0.0;
     for (final tag in post.tags) {
       tagMatch += tags[_tagKey(tag)] ?? 0;
+      tagAvoid += avoidTags[_tagKey(tag)] ?? 0;
     }
     return 2 * fresh +
         affinity(post.creatorKey) +
         min(tagMatch, 1.5) +
-        .4 * (services[post.service] ?? 0);
+        .4 * (services[post.service] ?? 0) -
+        aversion(post.creatorKey) -
+        min(tagAvoid, 1.5);
   }
 
   static String _tagKey(String tag) => tag.trim().toLowerCase();
@@ -139,7 +177,12 @@ List<Creator> pickSources(
   };
   final liked =
       taste.creators.entries
-          .where((e) => !candidates.containsKey(e.key) && e.value >= .5)
+          .where(
+            (e) =>
+                !candidates.containsKey(e.key) &&
+                e.value >= .5 &&
+                taste.aversion(e.key) < e.value,
+          )
           .toList()
         ..sort((a, b) => b.value.compareTo(a.value));
   for (final entry in liked.take(_likedSources)) {
@@ -311,6 +354,10 @@ class ForYouFeed extends Feed {
     );
     double score(Post post) =>
         taste.score(post, now) + _random.nextDouble() * _jitter;
+    bool wanted(Post post) =>
+        !_taken.contains(post.key) &&
+        !taste.disliked.contains(post.key) &&
+        !signals.blocklist.hides(post);
 
     final wantFollowing = queue.isEmpty && _pool.isEmpty
         ? 0
@@ -321,7 +368,7 @@ class ForYouFeed extends Feed {
       queue.removeRange(0, creators.length);
       final pages = await Future.wait(creators.map(_loadCreator));
       for (final page in pages) {
-        _pool.addAll(page.where((post) => !_taken.contains(post.key)));
+        _pool.addAll(page.where(wanted));
       }
     }
     // Three posts per artist keeps a page varied, but with only a few
@@ -349,10 +396,10 @@ class ForYouFeed extends Feed {
       }
       _offset += pageSize;
       if (page.length < pageSize) _recentDone = true;
-      _recentBuffer.addAll(page.where((post) => !_taken.contains(post.key)));
+      _recentBuffer.addAll(page.where(wanted));
     }
     final discovery = takeBest(
-      _recentBuffer..removeWhere((post) => _taken.contains(post.key)),
+      _recentBuffer..removeWhere((post) => !wanted(post)),
       wantRecent,
       score,
       perCreator: 2,

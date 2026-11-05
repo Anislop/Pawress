@@ -423,6 +423,23 @@ class Post {
 
   DateTime? get date => published ?? added;
 
+  Post copyWith({String? content}) => Post(
+    id: id,
+    user: user,
+    service: service,
+    title: title,
+    content: content ?? this.content,
+    published: published,
+    added: added,
+    file: file,
+    attachments: attachments,
+    tags: tags,
+    nextId: nextId,
+    prevId: prevId,
+    favorites: favorites,
+    poll: poll,
+  );
+
   factory Post.fromJson(Map<String, dynamic> json) => Post(
     id: _str(json['id']),
     user: _str(json['user']),
@@ -495,6 +512,20 @@ class PawchiveLink {
 
   static final _pattern = RegExp(
     r'/([\w-]+)/user/([^/?#]+)(?:/post/([^/?#]+))?',
+  );
+
+  /// The first pawchive.pw address in [text], such as a link shared from a
+  /// browser or chat app with words around it.
+  static Uri? findUrl(String text) {
+    final match = _url.firstMatch(text);
+    return match == null ? null : Uri.tryParse(match.group(0)!);
+  }
+
+  static final _url = RegExp(
+    r'https?://(?:www\.)?' +
+        RegExp.escape(siteHost) +
+        r'(?![\w.-])(?:[/?#:][^\s<>"]*)?',
+    caseSensitive: false,
   );
 
   static PawchiveLink? tryParse(String url) {
@@ -965,5 +996,125 @@ class UpdateNotice {
     'excerpt': excerpt,
     'thumb': thumbnailPath,
     'read': read,
+  };
+}
+
+/// Artists and tags the user never wants to see. Feeds leave out blocked
+/// artists' posts and posts carrying a blocked tag; an artist's own profile
+/// still lists their posts, under a notice.
+class Blocklist {
+  Blocklist({this.creators = const [], this.tags = const []})
+    : _creatorKeys = {for (final creator in creators) creator.key},
+      _tagKeys = {for (final tag in tags) tagKey(tag)};
+
+  final List<Creator> creators;
+
+  /// As the user typed them; matched without case or a leading `#`.
+  final List<String> tags;
+  final Set<String> _creatorKeys;
+  final Set<String> _tagKeys;
+
+  bool get isEmpty => creators.isEmpty && tags.isEmpty;
+
+  static String tagKey(String tag) =>
+      tag.trim().replaceFirst(RegExp(r'^#+'), '').trim().toLowerCase();
+
+  bool blocksCreator(String creatorKey) => _creatorKeys.contains(creatorKey);
+
+  bool blocksTag(String tag) => _tagKeys.contains(tagKey(tag));
+
+  /// Whether one of the post's tags is blocked. Popular and tag-page posts
+  /// carry no tags, so only their artist can hide them.
+  bool blocksTags(Post post) => _tagKeys.isNotEmpty && post.tags.any(blocksTag);
+
+  bool hides(Post post) => blocksCreator(post.creatorKey) || blocksTags(post);
+
+  Blocklist withCreator(Creator creator) => blocksCreator(creator.key)
+      ? this
+      : Blocklist(creators: [creator, ...creators], tags: tags);
+
+  Blocklist withoutCreator(String creatorKey) => Blocklist(
+    creators: [
+      for (final creator in creators)
+        if (creator.key != creatorKey) creator,
+    ],
+    tags: tags,
+  );
+
+  Blocklist withTag(String tag) {
+    final key = tagKey(tag);
+    if (key.isEmpty || _tagKeys.contains(key)) return this;
+    return Blocklist(creators: creators, tags: [key, ...tags]);
+  }
+
+  Blocklist withoutTag(String tag) => Blocklist(
+    creators: creators,
+    tags: [
+      for (final t in tags)
+        if (tagKey(t) != tagKey(tag)) t,
+    ],
+  );
+
+  /// Everything in either list, this one's entries first.
+  Blocklist merge(Blocklist other) => Blocklist(
+    creators: [
+      ...creators,
+      for (final creator in other.creators)
+        if (!blocksCreator(creator.key)) creator,
+    ],
+    tags: [
+      ...tags,
+      for (final tag in other.tags)
+        if (!blocksTag(tag)) tag,
+    ],
+  );
+
+  factory Blocklist.fromJson(Map<String, dynamic> json) => Blocklist(
+    creators: [
+      for (final item in json['creators'] as List? ?? const [])
+        if (item is Map<String, dynamic>) Creator.fromJson(item),
+    ],
+    tags: [
+      for (final tag in json['tags'] as List? ?? const [])
+        if (tagKey(_str(tag)).isNotEmpty) _str(tag),
+    ],
+  );
+
+  Map<String, dynamic> toJson() => {
+    'creators': [for (final creator in creators) creator.toJson()],
+    'tags': tags,
+  };
+}
+
+/// A post or artist page the user opened, listed in History.
+class Visit {
+  const Visit.post(Post this.post, this.at) : creator = null;
+  const Visit.creator(Creator this.creator, this.at) : post = null;
+
+  final Post? post;
+  final Creator? creator;
+  final DateTime at;
+
+  /// One entry per post or artist; opening it again moves it to the top.
+  String get key =>
+      post != null ? 'post:${post!.key}' : 'creator:${creator!.key}';
+
+  static Visit? tryParse(Map<String, dynamic> json) {
+    final at = parseDate(json['at']) ?? DateTime.now().toUtc();
+    final post = json['post'];
+    if (post is Map<String, dynamic>) {
+      return Visit.post(Post.fromJson(post), at);
+    }
+    final creator = json['creator'];
+    if (creator is Map<String, dynamic>) {
+      return Visit.creator(Creator.fromJson(creator), at);
+    }
+    return null;
+  }
+
+  Map<String, dynamic> toJson() => {
+    'post': ?post?.toJson(),
+    'creator': ?creator?.toJson(),
+    'at': at.toIso8601String(),
   };
 }
