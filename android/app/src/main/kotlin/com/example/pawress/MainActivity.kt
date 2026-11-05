@@ -8,6 +8,7 @@ import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
@@ -29,7 +30,8 @@ import java.util.concurrent.Executors
  *
  * The `pawress/intents` channel (lib/core/intents.dart) hands pawchive.pw
  * links opened or shared into the app to Dart, shares an image or offers it
- * to "Set as", and says whether the network is metered.
+ * to "Set as", opens a downloaded file or its folder, and says whether the
+ * network is metered.
  */
 class MainActivity : FlutterActivity() {
     private val executor = Executors.newSingleThreadExecutor()
@@ -79,6 +81,8 @@ class MainActivity : FlutterActivity() {
             }
             "shareFile" -> result.success(sendFile(call, Intent.ACTION_SEND, "Share image"))
             "setAs" -> result.success(sendFile(call, Intent.ACTION_ATTACH_DATA, "Set as"))
+            "viewFile" -> result.success(viewFile(call))
+            "viewFolder" -> result.success(viewFolder(call))
             "isMetered" -> {
                 val connectivity = getSystemService(ConnectivityManager::class.java)
                 result.success(connectivity?.isActiveNetworkMetered ?: false)
@@ -115,6 +119,47 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {
             false
         }
+    }
+
+    /** Opens a downloaded file, a document in a folder the user picked. */
+    private fun viewFile(call: MethodCall): Boolean {
+        val uri = call.argument<String>("uri")?.let(Uri::parse) ?: return false
+        if (uri.scheme != "content") return false
+        val mime = call.argument<String>("mime") ?: contentResolver.getType(uri) ?: "*/*"
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, mime)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        return tryStart(Intent.createChooser(intent, "Open with"))
+    }
+
+    /**
+     * Shows a picked download folder in the system file browser. Viewing a
+     * directory document is handled by Files on Android 8+; otherwise the
+     * folder picker opens there, which still lists the folder's files.
+     */
+    private fun viewFolder(call: MethodCall): Boolean {
+        val tree = call.argument<String>("uri")?.let(Uri::parse) ?: return false
+        if (tree.scheme != "content") return false
+        val folder = try {
+            DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+        } catch (_: Exception) {
+            return false
+        }
+        val view = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(folder, DocumentsContract.Document.MIME_TYPE_DIR)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (tryStart(view)) return true
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        return tryStart(
+            Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).putExtra(DocumentsContract.EXTRA_INITIAL_URI, folder),
+        )
+    }
+
+    private fun tryStart(intent: Intent): Boolean = try {
+        startActivity(intent)
+        true
+    } catch (_: Exception) {
+        false
     }
 
     private fun handle(call: MethodCall, result: MethodChannel.Result) {

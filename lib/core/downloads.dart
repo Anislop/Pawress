@@ -33,11 +33,16 @@ class DownloadTask {
   /// clash.
   String? savedName;
 
+  /// The saved file's content URI, for opening it in another app.
+  String? savedUri;
+
   /// The file as the full post lists it, when it had to be fetched; popular
   /// posts only know a thumbnail path, not the original name.
   MediaFile? _resolved;
 
   String get name => downloadName(post, _resolved ?? file);
+
+  String get mime => mimeOf((_resolved ?? file).extension);
 
   double? get progress =>
       total == null || total == 0 ? null : (received / total!).clamp(0, 1);
@@ -56,8 +61,9 @@ String downloadName(Post post, MediaFile file) {
 
 /// Writes a download into a folder the user picked.
 abstract class DownloadTarget {
-  /// Returns a handle for [write] and [close], and the name actually used.
-  Future<({String handle, String? name})> open(
+  /// Returns a handle for [write] and [close], and the name and URI
+  /// actually used.
+  Future<({String handle, String? name, String? uri})> open(
     String folderUri,
     String name,
     String mime,
@@ -71,13 +77,17 @@ class SafTarget implements DownloadTarget {
   final _saf = SafStream();
 
   @override
-  Future<({String handle, String? name})> open(
+  Future<({String handle, String? name, String? uri})> open(
     String folderUri,
     String name,
     String mime,
   ) async {
     final info = await _saf.startWriteStream(folderUri, name, mime);
-    return (handle: info.session, name: info.fileResult.fileName);
+    return (
+      handle: info.session,
+      name: info.fileResult.fileName,
+      uri: info.fileResult.uri.toString(),
+    );
   }
 
   @override
@@ -215,13 +225,10 @@ class DownloadManager extends ChangeNotifier {
         throw ApiException('The file host returned ${response.statusCode}.');
       }
       task.total = response.contentLength;
-      final opened = await _target.open(
-        task.folderUri,
-        task.name,
-        mimeOf((task._resolved ?? task.file).extension),
-      );
+      final opened = await _target.open(task.folderUri, task.name, task.mime);
       handle = opened.handle;
       task.savedName = opened.name ?? task.name;
+      task.savedUri = opened.uri;
 
       // Platform channel calls are slow, so bytes go over in larger blocks.
       final buffer = BytesBuilder(copy: false);
@@ -250,6 +257,7 @@ class DownloadManager extends ChangeNotifier {
       }
       task
         ..status = DownloadStatus.failed
+        ..savedUri = null
         ..error = e is ApiException ? e.message : 'Download failed: $e';
       _failed++;
     }

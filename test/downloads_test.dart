@@ -14,7 +14,7 @@ class _MemoryTarget implements DownloadTarget {
   final names = <String, String>{};
 
   @override
-  Future<({String handle, String? name})> open(
+  Future<({String handle, String? name, String? uri})> open(
     String folderUri,
     String name,
     String mime,
@@ -22,7 +22,7 @@ class _MemoryTarget implements DownloadTarget {
     final handle = 'h${files.length}';
     files[handle] = BytesBuilder();
     names[handle] = name;
-    return (handle: handle, name: name);
+    return (handle: handle, name: name, uri: 'content://test/$name');
   }
 
   @override
@@ -91,6 +91,8 @@ void main() {
       final task = manager.tasks.single;
       expect(task.status, DownloadStatus.done);
       expect(task.savedName, '1_Cover art.png');
+      expect(task.savedUri, 'content://test/1_Cover art.png');
+      expect(task.mime, 'image/png');
       expect(target.files.values.single.toBytes(), [1, 2, 3]);
     },
   );

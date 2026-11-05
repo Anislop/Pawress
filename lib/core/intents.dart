@@ -4,8 +4,8 @@ import 'package:flutter/services.dart';
 
 /// Android intents in and out, through the `pawress/intents` channel in
 /// MainActivity.kt: pawchive.pw links opened or shared into the app, sharing
-/// a file or offering it to "Set as" (wallpaper, contact photo), and whether
-/// the network is metered.
+/// a file or offering it to "Set as" (wallpaper, contact photo), opening a
+/// downloaded file or its folder, and whether the network is metered.
 class AndroidIntents {
   AndroidIntents._();
 
@@ -39,6 +39,15 @@ class AndroidIntents {
   /// Offers an image to apps that can use it, such as the wallpaper picker.
   static Future<bool> setAs(String path, String mime) async =>
       await _call<bool>('setAs', {'path': path, 'mime': mime}) ?? false;
+
+  /// Opens a saved file (a SAF document URI) in an app that can view it.
+  static Future<bool> viewFile(String uri, String mime) async =>
+      await _call<bool>('viewFile', {'uri': uri, 'mime': mime}) ?? false;
+
+  /// Opens a SAF folder (a tree URI from the folder picker) in the phone's
+  /// file browser.
+  static Future<bool> viewFolder(String treeUri) async =>
+      await _call<bool>('viewFolder', {'uri': treeUri}) ?? false;
 
   /// Whether the active network is metered (usually mobile data). Asked at
   /// most every 30 seconds.
