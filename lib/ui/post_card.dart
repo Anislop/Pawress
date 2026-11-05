@@ -14,14 +14,17 @@ import 'theme.dart';
 import 'widgets.dart';
 
 /// A post in a feed, laid out like a post on X: avatar column, name line,
-/// text, then a media grid. Holding it opens [showPostMenu].
+/// text, then a media grid. Holding it opens [showPostMenu]. Posts already
+/// opened have dimmer text unless [dimViewed] is off.
 class PostCard extends StatelessWidget {
-  const PostCard(this.post, {super.key});
+  const PostCard(this.post, {super.key, this.dimViewed = true});
 
   final Post post;
+  final bool dimViewed;
 
   @override
   Widget build(BuildContext context) {
+    final viewed = dimViewed && AppScope.of(context).wasViewed(post);
     final text = plainText(post.content);
     final media = post.media;
     final others = post.files.length - media.length;
@@ -50,10 +53,11 @@ class PostCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       post.title,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
                         height: 1.3,
+                        color: ink(viewed ? .62 : .94),
                       ),
                     ),
                   ],
@@ -66,7 +70,7 @@ class PostCard extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 15,
                         height: 1.35,
-                        color: ink(.82),
+                        color: ink(viewed ? .55 : .82),
                       ),
                     ),
                   ],
@@ -126,7 +130,7 @@ class PostActions extends StatelessWidget {
           icon: liked
               ? Icons.thumb_up_alt_rounded
               : Icons.thumb_up_alt_outlined,
-          color: liked ? pawPinkLight : ink(.6),
+          color: liked ? pinkText : ink(.6),
           onTap: () {
             final first = state.likes.isEmpty && !liked;
             HapticFeedback.lightImpact();
@@ -406,6 +410,7 @@ class _MediaTile extends StatelessWidget {
                 style: const TextStyle(
                   fontSize: 26,
                   fontWeight: FontWeight.w700,
+                  color: Colors.white,
                 ),
               ),
             ),
@@ -507,6 +512,22 @@ Future<void> showPostMenu(BuildContext context, Post post) {
               'Copy link',
               () => copyLink(context, post.url),
             ),
+            item(
+              Icons.not_interested_rounded,
+              'Not interested in this post',
+              () => markNotInterested(context, post),
+            ),
+            if (post.tags.isNotEmpty)
+              item(
+                Icons.tag_rounded,
+                'Block a tag…',
+                () => showBlockTags(context, post),
+              ),
+            item(
+              Icons.block_rounded,
+              'Block ${creator.name}',
+              () => blockCreator(context, creator),
+            ),
             if (text.isNotEmpty)
               item(Icons.content_copy_rounded, 'Copy text', () {
                 Clipboard.setData(
@@ -529,6 +550,118 @@ Future<void> showPostMenu(BuildContext context, Post post) {
     },
   );
 }
+
+/// Hides [post] and tells For You, with a way back.
+void markNotInterested(BuildContext context, Post post) {
+  final state = AppScope.read(context);
+  HapticFeedback.lightImpact();
+  state.notInterested(post);
+  ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(
+      SnackBar(
+        content: const Text("Got it. You'll see fewer posts like this."),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () => state.undoNotInterested(post),
+        ),
+      ),
+    );
+}
+
+/// Asks, then blocks [creator]: their posts leave every feed and they're
+/// unfollowed.
+Future<void> blockCreator(BuildContext context, Creator creator) async {
+  final state = AppScope.read(context);
+  final messenger = ScaffoldMessenger.of(context);
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialog) => AlertDialog(
+      title: Text('Block ${creator.name}?'),
+      content: Text(
+        state.isFollowing(creator.key)
+            ? 'Their posts leave your feeds and you unfollow them. Their '
+                  'profile still opens.'
+            : 'Their posts leave your feeds. Their profile still opens.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialog, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(dialog, true),
+          child: const Text('Block'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true) return;
+  HapticFeedback.mediumImpact();
+  await state.block(creator);
+  messenger
+    ..hideCurrentSnackBar()
+    ..showSnackBar(
+      SnackBar(
+        content: Text('Blocked ${creator.name}'),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () => state.unblock(creator.key),
+        ),
+      ),
+    );
+}
+
+/// The post's tags, each with a switch to block it everywhere.
+Future<void> showBlockTags(BuildContext context, Post post) =>
+    showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      isScrollControlled: true,
+      backgroundColor: canvas,
+      builder: (sheet) {
+        final state = AppScope.of(sheet);
+        return ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(sheet).height * .7,
+          ),
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.only(bottom: 12),
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
+                child: Text(
+                  'Block tags',
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    color: ink(.94),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                child: Text(
+                  'Posts with a blocked tag leave every feed.',
+                  style: TextStyle(color: ink(.55)),
+                ),
+              ),
+              for (final tag in post.tags)
+                SwitchListTile(
+                  title: Text('#$tag'),
+                  value: state.blocklist.blocksTag(tag),
+                  onChanged: (block) {
+                    HapticFeedback.selectionClick();
+                    block ? state.blockTag(tag) : state.unblockTag(tag);
+                  },
+                ),
+            ],
+          ),
+        );
+      },
+    );
 
 void openPost(BuildContext context, Post post) =>
     Navigator.of(context)

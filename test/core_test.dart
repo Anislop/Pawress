@@ -237,6 +237,35 @@ void main() {
     expect(page.ranges[PopularPeriod.day]!.current, '2026-11-02');
   });
 
+  test('parsePopularPage reads the range label and its neighbours', () {
+    const html = '''
+    <h1 class="site-section__heading">Popular Posts for <span title="2026-10-20 00:00:00 to 2026-10-27 00:00:00">October 20, 2026 - October 27, 2026</span></h1>
+    <div class="paginator" id="paginator-dates">
+      <div id="daily">
+        <span><a href="/posts/popular?date=2026-10-19&period=day">« prev</a></span>
+        <span><a href="/posts/popular?date=2026-10-20&period=day">Day</a></span>
+        <span><a href="/posts/popular?date=2026-10-21&period=day">next »</a></span>
+      </div>
+      <div id="weekly">
+        <span><a href="/posts/popular?date=2026-10-13&period=week">« prev</a></span>
+        <span><strong>Week</strong></span>
+        <span><a href="/posts/popular?date=2026-10-27&period=week">next »</a></span>
+      </div>
+      <div id="monthly">
+        <span><a href="/posts/popular?date=2026-09-01&period=month">« prev</a></span>
+        <span><a href="/posts/popular?date=2026-10-01&period=month">Month</a></span>
+        <span><span>next »</span></span>
+      </div>''';
+    final page = parsePopularPage(html);
+    expect(page.label, 'October 20, 2026 - October 27, 2026');
+    final week = page.ranges[PopularPeriod.week]!;
+    expect(week.current, isNull);
+    expect(week.previous, '2026-10-13');
+    expect(week.next, '2026-10-27');
+    expect(page.ranges[PopularPeriod.month]!.next, isNull);
+    expect(page.ranges[PopularPeriod.day]!.next, '2026-10-21');
+  });
+
   test('parseCreatorCards reads similar artists', () {
     const html = '''
   <a

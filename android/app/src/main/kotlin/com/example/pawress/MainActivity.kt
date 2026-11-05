@@ -1,10 +1,13 @@
 package com.example.pawress
 
+import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
@@ -23,22 +26,95 @@ import java.util.concurrent.Executors
  * installer once it is checked to be a newer build of this app signed with
  * the same key. It also opens the app's page in Android's notification
  * settings for lib/core/updates.dart.
+ *
+ * The `pawress/intents` channel (lib/core/intents.dart) hands pawchive.pw
+ * links opened or shared into the app to Dart, shares an image or offers it
+ * to "Set as", and says whether the network is metered.
  */
 class MainActivity : FlutterActivity() {
     private val executor = Executors.newSingleThreadExecutor()
     private var channel: MethodChannel? = null
+    private var intents: MethodChannel? = null
+
+    /** The link that launched the app, until Dart asks for it. */
+    private var pendingLink: String? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        // A recreated activity's intent was already handled.
+        if (savedInstanceState == null) pendingLink = linkOf(intent)
+        super.onCreate(savedInstanceState)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val link = linkOf(intent) ?: return
+        val channel = intents
+        if (channel == null) pendingLink = link else channel.invokeMethod("link", link)
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).apply {
+        val messenger = flutterEngine.dartExecutor.binaryMessenger
+        channel = MethodChannel(messenger, CHANNEL).apply {
             setMethodCallHandler(::handle)
+        }
+        intents = MethodChannel(messenger, INTENTS_CHANNEL).apply {
+            setMethodCallHandler(::handleIntents)
         }
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         channel?.setMethodCallHandler(null)
         channel = null
+        intents?.setMethodCallHandler(null)
+        intents = null
         super.cleanUpFlutterEngine(flutterEngine)
+    }
+
+    private fun handleIntents(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "initialLink" -> {
+                result.success(pendingLink)
+                pendingLink = null
+            }
+            "shareFile" -> result.success(sendFile(call, Intent.ACTION_SEND, "Share image"))
+            "setAs" -> result.success(sendFile(call, Intent.ACTION_ATTACH_DATA, "Set as"))
+            "isMetered" -> {
+                val connectivity = getSystemService(ConnectivityManager::class.java)
+                result.success(connectivity?.isActiveNetworkMetered ?: false)
+            }
+            else -> result.notImplemented()
+        }
+    }
+
+    /** A link opened on pawchive.pw or text shared into the app. */
+    private fun linkOf(intent: Intent?): String? = when (intent?.action) {
+        Intent.ACTION_VIEW -> intent.dataString
+        Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)
+        else -> null
+    }
+
+    /** Offers a file from the cache's `shared` folder to other apps. */
+    private fun sendFile(call: MethodCall, action: String, title: String): Boolean {
+        val path = call.argument<String>("path") ?: return false
+        val mime = call.argument<String>("mime") ?: "image/*"
+        val folder = File(cacheDir, SHARED_FOLDER).canonicalFile
+        val file = File(path).canonicalFile
+        if (file.parentFile != folder || !file.isFile) return false
+        val uri = FileProvider.getUriForFile(this, "$packageName.updates", file)
+        val intent = Intent(action).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (action == Intent.ACTION_SEND) {
+            intent.setType(mime).putExtra(Intent.EXTRA_STREAM, uri)
+        } else {
+            intent.setDataAndType(uri, mime).putExtra("mimeType", mime)
+        }
+        intent.clipData = ClipData.newRawUri(file.name, uri)
+        return try {
+            startActivity(Intent.createChooser(intent, title))
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun handle(call: MethodCall, result: MethodChannel.Result) {
@@ -194,6 +270,8 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val CHANNEL = "pawress/updater"
+        private const val INTENTS_CHANNEL = "pawress/intents"
+        private const val SHARED_FOLDER = "shared"
         private const val UPDATE_FOLDER = "updates"
         private const val UPDATE_FILE = "pawress-update.apk"
         private const val APK_MIME_TYPE = "application/vnd.android.package-archive"

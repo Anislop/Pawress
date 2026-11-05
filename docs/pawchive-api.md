@@ -33,9 +33,10 @@ applies.
 | Endpoint | Notes |
 | --- | --- |
 | `GET /posts?o=&q=` | Site-wide recent posts. Items have `substring` (truncated HTML, may end mid-tag) instead of `content`, no creator name, and no `temp_url`. |
-| `GET /{service}/user/{id}?o=&q=&tag=` | A creator's posts (full `content`, `temp_url`s). |
+| `GET /{service}/user/{id}?o=&q=&tag=` | A creator's posts (full `content`, `temp_url`s). `q` searches titles and text and works with one or two letters too. |
 | `GET /{service}/user/{id}/profile` | Creator profile. `updated` is cheap to poll for changes. |
-| `GET /{service}/user/{id}/post/{post}` | Single post, unwrapped (not `{"post": ...}`), with `next`/`prev` ids. |
+| `GET /{service}/user/{id}/post/{post}` | Single post, unwrapped (not `{"post": ...}`), with `next`/`prev` ids: **`next` is the older post and `prev` the newer one** (the newest post has `prev: null`). |
+| `GET /{service}/user/{id}/post/{post}/revisions` | In the schema, not used yet. `[]` for a post without revisions; the item shape is still unknown. |
 | `GET /{service}/user/{id}/announcements` | `[{hash, content (HTML), added}]` |
 | `GET /{service}/user/{id}/tags` | `[{tag, post_count}]` |
 | `GET /{service}/user/{id}/links` | Linked creator accounts on other services |
@@ -52,7 +53,7 @@ Web pages Pawress scrapes (`https://pawchive.pw`, not the API):
 | Page | Notes |
 | --- | --- |
 | `/{service}/user/{id}/dms` | DM cards; see Quirks. |
-| `/posts/popular?date=&period=&o=` | 50 `article.post-card` per page with `data-id`, `data-service`, `data-user`, a `post-card__header` title, a `/thumbnail/data{path}` image, `<time datetime="YYYY-MM-DD HH:MM:SS">` and "N favorites". No params means the last 24 hours. `period=day` takes any date; `week` and `month` only work with the start date the page itself links to in `#daily`, `#weekly` and `#monthly` (a week started 2026-10-27 for 2026-11-02, a month starts on the 1st). Other dates return no posts. |
+| `/posts/popular?date=&period=&o=` | 50 `article.post-card` per page with `data-id`, `data-service`, `data-user`, a `post-card__header` title, a `/thumbnail/data{path}` image, `<time datetime="YYYY-MM-DD HH:MM:SS">` and "N favorites". No params means the last 24 hours. `period=day` takes any date; `week` and `month` only work with the start date the page itself links to in `#daily`, `#weekly` and `#monthly` (weeks start on Tuesdays: 2026-10-20, 10-27, 11-03; a month starts on the 1st). Other dates return no posts. Each block links `« prev`, the period's current range and `next »`; on the page's own period the middle link is `<strong>Week</strong>` with no date, and at the newest range `next »` is a plain `<span>`. The heading `h1.site-section__heading` has a `<span title="2026-10-20 00:00:00 to 2026-10-27 00:00:00">` with the range in words ("October 20, 2026 - October 27, 2026", or "the past 24 hours"). |
 | `/{service}/user/{id}/community[/{channel}]?o=` | Patreon community chats; see Quirks. |
 | `/{service}/user/{id}/recommended` | "Similar artists": up to 50 `a.user-card` with `data-id`, `data-service` and `div.user-card__name`. No favorites or dates. |
 | `/posts/tags` | Popular tags, about 2000, most used first: `<article><a href="/posts?tag=..."><span>{tag}</span><span>{count}</span></a></article>` in `#tag-container`. |

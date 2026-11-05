@@ -8,6 +8,7 @@ import 'package:workmanager/workmanager.dart';
 
 import 'api.dart';
 import 'config.dart';
+import 'downloads.dart';
 import 'models.dart';
 import 'store.dart';
 
@@ -137,7 +138,8 @@ List<UpdateNotice> pushable(List<UpdateNotice> notices, List<Follow> follows) {
   ];
 }
 
-/// System notifications for new posts.
+/// System notifications for new posts, and the progress notification that
+/// keeps downloads running in the background.
 class Notifier {
   Notifier._();
 
@@ -312,6 +314,92 @@ class Notifier {
     );
   }
 
+  /// The payload of the download notifications, which open Downloads.
+  static const downloadsPayload = 'downloads';
+  static const _downloadId = 7101;
+  static const _downloadDoneId = 7102;
+  static const _downloadChannel = AndroidNotificationDetails(
+    'downloads',
+    'Downloads',
+    channelDescription: 'Progress while Pawress saves files',
+    importance: Importance.low,
+    priority: Priority.low,
+  );
+
+  static AndroidNotificationDetails _downloadDetails({
+    int done = 0,
+    int total = 0,
+    bool ongoing = true,
+  }) => AndroidNotificationDetails(
+    _downloadChannel.channelId,
+    _downloadChannel.channelName,
+    channelDescription: _downloadChannel.channelDescription,
+    importance: _downloadChannel.importance,
+    priority: _downloadChannel.priority,
+    ongoing: ongoing,
+    autoCancel: !ongoing,
+    onlyAlertOnce: true,
+    showWhen: false,
+    showProgress: ongoing,
+    maxProgress: total,
+    progress: done,
+    indeterminate: ongoing && total == 0,
+    category: AndroidNotificationCategory.progress,
+  );
+
+  /// Starts or updates the foreground service that keeps the process (and
+  /// so the download queue) alive while Pawress is in the background.
+  static Future<void> showDownloads({
+    required int done,
+    required int total,
+    required String body,
+    bool start = false,
+  }) async {
+    await init();
+    final title = total == 1
+        ? 'Downloading 1 file'
+        : 'Downloading ${done + 1} of $total files';
+    final details = _downloadDetails(done: done, total: total);
+    if (start) {
+      await _android?.startForegroundService(
+        id: _downloadId,
+        title: title,
+        body: body,
+        notificationDetails: details,
+        payload: downloadsPayload,
+        startType: AndroidServiceStartType.startNotSticky,
+        foregroundServiceTypes: {
+          AndroidServiceForegroundType.foregroundServiceTypeDataSync,
+        },
+      );
+    } else {
+      await _plugin.show(
+        id: _downloadId,
+        title: title,
+        body: body,
+        notificationDetails: NotificationDetails(android: details),
+        payload: downloadsPayload,
+      );
+    }
+  }
+
+  /// Stops the service; with [summary], says how the queue went.
+  static Future<void> stopDownloads({String? summary}) async {
+    await init();
+    await _android?.stopForegroundService();
+    await _plugin.cancel(id: _downloadId);
+    if (summary == null) return;
+    await _plugin.show(
+      id: _downloadDoneId,
+      title: 'Downloads finished',
+      body: summary,
+      notificationDetails: NotificationDetails(
+        android: _downloadDetails(ongoing: false),
+      ),
+      payload: downloadsPayload,
+    );
+  }
+
   /// A thumbnail's bytes, or null when it can't be had quickly or is too big
   /// for a notification.
   static Future<Uint8List?> _picture(http.Client client, String url) async {
@@ -328,6 +416,78 @@ class Notifier {
       return bytes;
     } catch (_) {
       return null;
+    }
+  }
+}
+
+/// Mirrors the download queue in a progress notification. Posting it starts
+/// a foreground service, so Android keeps Pawress running (and saving)
+/// after it leaves the screen; the service stops when the queue empties.
+/// Swiping Pawress out of recent apps still ends it.
+class DownloadNotification {
+  DownloadNotification(this._downloads) {
+    _downloads.addListener(_update);
+  }
+
+  final DownloadManager _downloads;
+  bool _shown = false;
+  int _lastDone = -1;
+  DateTime _last = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Progress updates are kept to about one a second.
+  static const _interval = Duration(seconds: 1);
+
+  void _update() {
+    final active = _downloads.active;
+    if (active == 0) return;
+    final done = _downloads.finishedInBatch;
+    final now = DateTime.now();
+    if (_shown && done == _lastDone && now.difference(_last) < _interval) {
+      return;
+    }
+    final start = !_shown;
+    _shown = true;
+    _last = now;
+    _lastDone = done;
+    final task = _downloads.current;
+    final percent = task?.progress == null
+        ? ''
+        : ' · ${(task!.progress! * 100).round()}%';
+    unawaited(
+      _quietly(
+        () => Notifier.showDownloads(
+          done: done,
+          total: done + active,
+          body: task == null ? 'Waiting…' : '${task.name}$percent',
+          start: start,
+        ),
+      ),
+    );
+  }
+
+  /// Called when the queue empties. The summary is only posted while
+  /// Pawress is in the background; on screen a snackbar says it.
+  void finish(int saved, int failed) {
+    if (!_shown) return;
+    _shown = false;
+    _lastDone = -1;
+    final away =
+        WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed;
+    String files(int n) => n == 1 ? '1 file' : '$n files';
+    final summary = failed == 0
+        ? 'Saved ${files(saved)}.'
+        : 'Saved ${files(saved)}; ${files(failed)} failed.';
+    unawaited(
+      _quietly(() => Notifier.stopDownloads(summary: away ? summary : null)),
+    );
+  }
+
+  /// Downloads go on whether or not the notification can be shown.
+  static Future<void> _quietly(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (e) {
+      debugPrint('Download notification failed: $e');
     }
   }
 }

@@ -120,6 +120,20 @@ class DownloadManager extends ChangeNotifier {
 
   int get active => tasks.where((task) => !task.finished).length;
 
+  /// Files finished since the queue was last empty.
+  int get finishedInBatch => _saved + _failed;
+
+  /// The download furthest along, for the progress notification.
+  DownloadTask? get current => tasks
+      .where((task) => task.status == DownloadStatus.running)
+      .fold<DownloadTask?>(
+        null,
+        (best, task) =>
+            best == null || (task.progress ?? 0) > (best.progress ?? 0)
+            ? task
+            : best,
+      );
+
   void enqueue(
     Post post,
     Iterable<MediaFile> files, {
@@ -204,7 +218,7 @@ class DownloadManager extends ChangeNotifier {
       final opened = await _target.open(
         task.folderUri,
         task.name,
-        _mimeOf((task._resolved ?? task.file).extension),
+        mimeOf((task._resolved ?? task.file).extension),
       );
       handle = opened.handle;
       task.savedName = opened.name ?? task.name;
@@ -262,7 +276,8 @@ class DownloadManager extends ChangeNotifier {
   }
 }
 
-String _mimeOf(String extension) => switch (extension) {
+/// The media type Android should record for a file with [extension].
+String mimeOf(String extension) => switch (extension) {
   'jpg' || 'jpeg' => 'image/jpeg',
   'png' => 'image/png',
   'gif' => 'image/gif',

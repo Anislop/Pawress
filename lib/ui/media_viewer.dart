@@ -12,8 +12,10 @@ import 'package:visibility_detector/visibility_detector.dart';
 import '../core/api.dart';
 import '../core/config.dart';
 import '../core/models.dart';
+import '../core/store.dart';
 import 'app_scope.dart';
 import 'downloads.dart';
+import 'share.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -53,6 +55,11 @@ class _MediaViewerState extends State<MediaViewer>
   String? _error;
   bool _resolving = false;
 
+  /// Data saver holds full images back until asked, per item or for all.
+  /// Null until it's known whether it applies, which holds them too.
+  bool? _saving;
+  final _fullAsked = <int>{};
+
   /// The long-press download button: the held item and where the button
   /// sits in the viewer.
   ({int index, Rect button})? _press;
@@ -80,6 +87,22 @@ class _MediaViewerState extends State<MediaViewer>
   void initState() {
     super.initState();
     if (_media.any((m) => m.fullUrl == null)) _resolve();
+    final state = AppScope.read(context);
+    if (state.settings.dataSaver == DataSaver.off) {
+      _saving = false;
+    } else {
+      state.savingData().then((saving) {
+        if (mounted) setState(() => _saving = saving);
+      });
+    }
+  }
+
+  bool _fullAllowed(int index) =>
+      _saving == false || _fullAsked.contains(index);
+
+  void _askFull(int index) {
+    HapticFeedback.selectionClick();
+    setState(() => _fullAsked.add(index));
   }
 
   @override
@@ -231,7 +254,9 @@ class _MediaViewerState extends State<MediaViewer>
               key: ValueKey(item.fullUrl),
               url: item.fullUrl!,
               active: index == _index,
-              autoplay: AppScope.read(context).settings.autoplayVideos,
+              autoplay:
+                  AppScope.read(context).settings.autoplayVideos &&
+                  _saving == false,
               onDownload: () => downloadFiles(context, widget.post, [item]),
             );
     } else {
@@ -254,7 +279,13 @@ class _MediaViewerState extends State<MediaViewer>
               key: ValueKey(item.path),
               file: item,
               gate: _gate,
-              loadFull: !_resolving && _visible.containsKey(index),
+              loadFull:
+                  !_resolving &&
+                  _visible.containsKey(index) &&
+                  _fullAllowed(index),
+              onAskFull: _saving != true || _fullAllowed(index)
+                  ? null
+                  : () => _askFull(index),
               onZoom: (zoomed) {
                 if (zoomed != _zoomed) setState(() => _zoomed = zoomed);
               },
@@ -275,75 +306,93 @@ class _MediaViewerState extends State<MediaViewer>
     final file = _media[_index.clamp(0, _media.length - 1)];
     final start = widget.initialIndex.clamp(0, _media.length);
     final press = _press;
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          NotificationListener<ScrollUpdateNotification>(
-            onNotification: (_) {
-              _dismissPress();
-              return false;
-            },
-            child: CustomScrollView(
-              controller: _scroll,
-              center: _centerKey,
-              physics: _zoomed ? const NeverScrollableScrollPhysics() : null,
-              slivers: [
-                SliverToBoxAdapter(child: SizedBox(height: _topInset)),
-                // Above the center: the items before the tapped one, nearest
-                // first.
-                SliverList.builder(
-                  itemCount: start,
-                  itemBuilder: (context, i) => _item(start - 1 - i),
-                ),
-                SliverList.builder(
-                  key: _centerKey,
-                  itemCount: _media.length - start,
-                  itemBuilder: (context, i) => _item(start + i),
-                ),
-                SliverToBoxAdapter(
-                  child: SizedBox(
-                    height: MediaQuery.paddingOf(context).bottom + 24,
+    // White status bar icons over the black viewer, whatever the theme.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light,
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
+          children: [
+            NotificationListener<ScrollUpdateNotification>(
+              onNotification: (_) {
+                _dismissPress();
+                return false;
+              },
+              child: CustomScrollView(
+                controller: _scroll,
+                center: _centerKey,
+                physics: _zoomed ? const NeverScrollableScrollPhysics() : null,
+                slivers: [
+                  SliverToBoxAdapter(child: SizedBox(height: _topInset)),
+                  // Above the center: the items before the tapped one, nearest
+                  // first.
+                  SliverList.builder(
+                    itemCount: start,
+                    itemBuilder: (context, i) => _item(start - 1 - i),
+                  ),
+                  SliverList.builder(
+                    key: _centerKey,
+                    itemCount: _media.length - start,
+                    itemBuilder: (context, i) => _item(start + i),
+                  ),
+                  SliverToBoxAdapter(
+                    child: SizedBox(
+                      height: MediaQuery.paddingOf(context).bottom + 24,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: AnimatedOpacity(
+                opacity: _chrome ? 1 : 0,
+                duration: const Duration(milliseconds: 180),
+                child: IgnorePointer(
+                  ignoring: !_chrome,
+                  child: _TopBar(
+                    title: _media.length > 1
+                        ? '${_index + 1} / ${_media.length}'
+                        : '',
+                    subtitle: file.name,
+                    onOpen: file.fullUrl == null
+                        ? null
+                        : () => openExternal(file.fullUrl!),
+                    onDownload: _resolving
+                        ? null
+                        : () => downloadFiles(context, widget.post, [file]),
+                    onShare: _resolving || file.isVideo
+                        ? null
+                        : () => shareImage(context, widget.post, file),
+                    onSetAs: _resolving || file.isVideo
+                        ? null
+                        : () => setImageAs(context, widget.post, file),
+                    onLoadAll:
+                        _saving == true && _fullAsked.length < _media.length
+                        ? () => setState(
+                            () => _fullAsked.addAll(
+                              List.generate(_media.length, (i) => i),
+                            ),
+                          )
+                        : null,
                   ),
                 ),
-              ],
+              ),
             ),
-          ),
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: AnimatedOpacity(
-              opacity: _chrome ? 1 : 0,
-              duration: const Duration(milliseconds: 180),
-              child: IgnorePointer(
-                ignoring: !_chrome,
-                child: _TopBar(
-                  title: _media.length > 1
-                      ? '${_index + 1} / ${_media.length}'
-                      : '',
-                  subtitle: file.name,
-                  onOpen: file.fullUrl == null
-                      ? null
-                      : () => openExternal(file.fullUrl!),
-                  onDownload: _resolving
-                      ? null
-                      : () => downloadFiles(context, widget.post, [file]),
+            // Scrolling, tapping an image or waiting puts it away.
+            if (press != null)
+              Positioned.fromRect(
+                rect: press.button,
+                child: _PressButton(
+                  key: ValueKey(press),
+                  hover: _pressHover,
+                  onTap: _pressDownload,
                 ),
               ),
-            ),
-          ),
-          // Scrolling, tapping an image or waiting puts it away.
-          if (press != null)
-            Positioned.fromRect(
-              rect: press.button,
-              child: _PressButton(
-                key: ValueKey(press),
-                hover: _pressHover,
-                onTap: _pressDownload,
-              ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -442,12 +491,20 @@ class _TopBar extends StatelessWidget {
     required this.subtitle,
     this.onOpen,
     this.onDownload,
+    this.onShare,
+    this.onSetAs,
+    this.onLoadAll,
   });
 
   final String title;
   final String subtitle;
   final VoidCallback? onOpen;
   final VoidCallback? onDownload;
+  final VoidCallback? onShare;
+  final VoidCallback? onSetAs;
+
+  /// Data saver: load every full image now.
+  final VoidCallback? onLoadAll;
 
   @override
   Widget build(BuildContext context) => DecoratedBox(
@@ -496,14 +553,34 @@ class _TopBar extends StatelessWidget {
                 icon: const Icon(Icons.download_rounded, color: Colors.white),
                 onPressed: onDownload,
               ),
-            if (onOpen != null)
+            if (onShare != null)
               IconButton(
-                tooltip: 'Open in browser',
-                icon: const Icon(
-                  Icons.open_in_new_rounded,
-                  color: Colors.white,
-                ),
-                onPressed: onOpen,
+                tooltip: 'Share',
+                icon: const Icon(Icons.share_rounded, color: Colors.white),
+                onPressed: onShare,
+              ),
+            if (onSetAs != null || onLoadAll != null || onOpen != null)
+              PopupMenuButton<VoidCallback>(
+                tooltip: 'More',
+                icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+                onSelected: (action) => action(),
+                itemBuilder: (_) => [
+                  if (onSetAs != null)
+                    PopupMenuItem(
+                      value: onSetAs!,
+                      child: const Text('Set as wallpaper…'),
+                    ),
+                  if (onLoadAll != null)
+                    PopupMenuItem(
+                      value: onLoadAll!,
+                      child: const Text('Load full images'),
+                    ),
+                  if (onOpen != null)
+                    PopupMenuItem(
+                      value: onOpen!,
+                      child: const Text('Open in browser'),
+                    ),
+                ],
               ),
           ],
         ),
@@ -538,12 +615,16 @@ class _ImageItem extends StatefulWidget {
     required this.gate,
     required this.loadFull,
     required this.onZoom,
+    this.onAskFull,
   });
 
   final MediaFile file;
   final _FullFileGate gate;
   final bool loadFull;
   final ValueChanged<bool> onZoom;
+
+  /// Data saver is holding the full file back; shows a button for it.
+  final VoidCallback? onAskFull;
 
   @override
   State<_ImageItem> createState() => _ImageItemState();
@@ -706,6 +787,25 @@ class _ImageItemState extends State<_ImageItem>
                           ],
                         ),
                   errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                ),
+              ),
+            if (widget.onAskFull != null && full == null)
+              Positioned(
+                right: 10,
+                bottom: 10,
+                child: ActionChip(
+                  avatar: const Icon(
+                    Icons.hd_outlined,
+                    size: 18,
+                    color: Colors.white,
+                  ),
+                  label: const Text(
+                    'Load full image',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  backgroundColor: Colors.black.withValues(alpha: .7),
+                  side: const BorderSide(color: Colors.white38),
+                  onPressed: widget.onAskFull,
                 ),
               ),
           ],

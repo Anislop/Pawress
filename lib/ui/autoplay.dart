@@ -133,6 +133,9 @@ class _AutoplayMediaState extends State<AutoplayMedia> {
   }
 
   Future<void> _play() async {
+    // Saving data keeps the still; the viewer still opens the file on tap.
+    if (await AppScope.read(context).savingData()) return;
+    if (!mounted || !_wanted) return;
     try {
       _url ??= await _fullUrl();
       if (_url == null) throw StateError('No file URL');

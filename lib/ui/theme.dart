@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/store.dart';
 
@@ -10,47 +11,69 @@ const pawPlum = Color(0xFF401C30);
 const pawIconBackground = Color(0xFF4A3340);
 const pawOutline = Color(0xFF200810);
 
-/// The pink wordmark, made for dark backgrounds.
-const logoAsset = 'assets/LogoFlatBlack.png';
+/// A deeper pink for text and accents on the light theme, where
+/// [pawPinkLight] would wash out.
+const pawPinkDeep = Color(0xFF9E4A76);
+
+/// The wordmark for the current theme: pink on dark surfaces, plum on
+/// light ones.
+String get logoAsset =>
+    isLight ? 'assets/LogoFlatWhite.png' : 'assets/LogoFlatBlack.png';
 const iconAsset = 'assets/AppIcon.png';
 
 ThemeChoice _choice = ThemeChoice.plum;
 
 /// Switches the colors [canvas], [panel] and [ink] return. Widgets read them
 /// directly, so the app rebuilds its whole tree after calling this.
-void setPalette(ThemeChoice choice) => _choice = choice;
+/// [ThemeChoice.system] picks Light or Plum from [platform].
+void setPalette(ThemeChoice choice, {Brightness platform = Brightness.dark}) =>
+    _choice = choice == ThemeChoice.system
+    ? (platform == Brightness.light ? ThemeChoice.light : ThemeChoice.plum)
+    : choice;
+
+bool get isLight => _choice == ThemeChoice.light;
 
 /// Page background.
 Color get canvas => switch (_choice) {
-  ThemeChoice.plum => const Color(0xFF22141B),
   ThemeChoice.amoled => Colors.black,
+  ThemeChoice.light => const Color(0xFFFFF8FB),
+  _ => const Color(0xFF22141B),
 };
 
 /// Raised surfaces: sheets, dialogs, chips and the drawer header.
 Color get panel => switch (_choice) {
-  ThemeChoice.plum => const Color(0xFF33212B),
   ThemeChoice.amoled => const Color(0xFF150C11),
+  ThemeChoice.light => const Color(0xFFF6E7EF),
+  _ => const Color(0xFF33212B),
 };
 
 /// Hairlines between posts, like X's separators.
-Color get hairline => pawMauve.withValues(alpha: .28);
+Color get hairline => pawMauve.withValues(alpha: isLight ? .22 : .28);
 
-/// Text and icons at [opacity]: a pink-tinted white.
-Color ink(double opacity) => const Color(0xFFFBEFF5).withValues(alpha: opacity);
+/// Text and icons at [opacity]: a pink-tinted white, or a deep plum on the
+/// light theme.
+Color ink(double opacity) =>
+    (isLight ? const Color(0xFF2A1220) : const Color(0xFFFBEFF5)).withValues(
+      alpha: opacity,
+    );
+
+/// Pink text and active icons that stay readable on [canvas].
+Color get pinkText => isLight ? pawPinkDeep : pawPinkLight;
 
 ThemeData buildTheme() {
+  final brightness = isLight ? Brightness.light : Brightness.dark;
   final scheme = ColorScheme.fromSeed(
     seedColor: pawPink,
-    brightness: Brightness.dark,
-    primary: pawPink,
-    onPrimary: pawOutline,
-    secondary: pawPinkLight,
+    brightness: brightness,
+    primary: isLight ? pawPinkDeep : pawPink,
+    onPrimary: isLight ? Colors.white : pawOutline,
+    secondary: pinkText,
     surface: canvas,
     onSurface: ink(.94),
   );
   return ThemeData(
     useMaterial3: true,
-    brightness: Brightness.dark,
+    brightness: brightness,
     colorScheme: scheme,
     scaffoldBackgroundColor: canvas,
     canvasColor: canvas,
@@ -60,6 +83,9 @@ ThemeData buildTheme() {
       foregroundColor: ink(.94),
       elevation: 0,
       scrolledUnderElevation: 0,
+      systemOverlayStyle: isLight
+          ? SystemUiOverlayStyle.dark
+          : SystemUiOverlayStyle.light,
     ),
     drawerTheme: DrawerThemeData(
       backgroundColor: canvas,

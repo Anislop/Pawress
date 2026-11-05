@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../core/config.dart';
 import '../core/feeds.dart';
 import '../core/models.dart';
+import 'app_scope.dart';
 import 'theme.dart';
 
 /// A network image sent with the app's user agent, which Pawchive requires.
@@ -141,8 +142,9 @@ class HtmlContent extends StatelessWidget {
   Widget build(BuildContext context) => HtmlWidget(
     html,
     textStyle: TextStyle(fontSize: fontSize, height: 1.4, color: ink(.9)),
-    customStylesBuilder: (element) =>
-        element.localName == 'a' ? {'color': '#E8B6D1'} : null,
+    customStylesBuilder: (element) => element.localName == 'a'
+        ? {'color': isLight ? '#9E4A76' : '#E8B6D1'}
+        : null,
     onTapUrl: (url) => openExternal(url),
   );
 }
@@ -301,6 +303,16 @@ String compactCount(int count) {
   return '${m < 10 ? m.toStringAsFixed(1).replaceFirst('.0', '') : m.round()}M';
 }
 
+/// 512 B, 40 KB, 3.4 MB, 1.25 GB.
+String formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
+  if (bytes < 1024 * 1024 * 1024) {
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+  }
+  return '${(bytes / 1024 / 1024 / 1024).toStringAsFixed(2)} GB';
+}
+
 String shortTime(DateTime? time) {
   if (time == null) return '';
   final local = time.toLocal();
@@ -391,6 +403,8 @@ class StatusView extends StatelessWidget {
 
 /// A [Feed] as an endless, pull-to-refresh list. Inside a [NestedScrollView]
 /// pass its [overlapHandle] so the list starts below the collapsing header.
+/// Blocked and "not interested" posts are left out as they're marked, with
+/// no reload.
 class FeedView extends StatefulWidget {
   const FeedView({
     super.key,
@@ -399,6 +413,8 @@ class FeedView extends StatefulWidget {
     this.overlapHandle,
     this.empty,
     this.header,
+    this.creatorKey,
+    this.newSince,
   });
 
   final Feed feed;
@@ -410,6 +426,13 @@ class FeedView extends StatefulWidget {
 
   /// A sliver above the posts, such as an active tag filter.
   final Widget? header;
+
+  /// On this artist's profile, their posts show even when blocked.
+  final String? creatorKey;
+
+  /// Posts after this are new since the last visit; a line marks where
+  /// they end.
+  final DateTime? newSince;
 
   @override
   State<FeedView> createState() => _FeedViewState();
@@ -428,11 +451,31 @@ class _FeedViewState extends State<FeedView> {
     return false;
   }
 
+  bool _isNew(Post post) {
+    final since = widget.newSince;
+    final date = post.date;
+    return since != null && date != null && date.isAfter(since);
+  }
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: widget.feed,
     builder: (context, _) {
       final feed = widget.feed;
+      final state = AppScope.of(context);
+      final posts = [
+        for (final post in feed.posts)
+          if (!state.hides(post, creatorKey: widget.creatorKey)) post,
+      ];
+      // Hiding can leave too little to scroll, and loading more is
+      // triggered by scrolling.
+      if (posts.length < 6 &&
+          posts.length < feed.posts.length &&
+          !feed.done &&
+          !feed.loading &&
+          feed.error == null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => feed.loadMore());
+      }
       return BackToTop(
         child: RefreshIndicator(
           onRefresh: feed.refresh,
@@ -447,12 +490,15 @@ class _FeedViewState extends State<FeedView> {
                   SliverOverlapInjector(handle: widget.overlapHandle!),
                 ?widget.header,
                 SliverList.separated(
-                  itemCount: feed.posts.length,
+                  itemCount: posts.length,
                   itemBuilder: (context, index) =>
-                      widget.itemBuilder(context, feed.posts[index]),
-                  separatorBuilder: (_, _) => const Divider(),
+                      widget.itemBuilder(context, posts[index]),
+                  separatorBuilder: (_, index) =>
+                      _isNew(posts[index]) && !_isNew(posts[index + 1])
+                      ? const _CaughtUp()
+                      : const Divider(),
                 ),
-                SliverToBoxAdapter(child: _footer(feed)),
+                SliverToBoxAdapter(child: _footer(feed, posts.isEmpty)),
               ],
             ),
           ),
@@ -461,13 +507,11 @@ class _FeedViewState extends State<FeedView> {
     },
   );
 
-  Widget _footer(Feed feed) {
+  Widget _footer(Feed feed, bool empty) {
     if (feed.error != null) {
       return StatusView(
         icon: Icons.cloud_off_rounded,
-        title: feed.posts.isEmpty
-            ? 'Could not load posts'
-            : 'Could not load more',
+        title: empty ? 'Could not load posts' : 'Could not load more',
         body: feed.error,
         action: 'Try again',
         onAction: feed.posts.isEmpty ? feed.refresh : feed.loadMore,
@@ -479,10 +523,48 @@ class _FeedViewState extends State<FeedView> {
         child: Center(child: CircularProgressIndicator()),
       );
     }
-    if (feed.done && feed.posts.isEmpty) {
+    if (feed.done && empty) {
       return widget.empty ??
           const StatusView(icon: Icons.inbox_outlined, title: 'No posts yet');
     }
     return const SizedBox(height: 96);
   }
+}
+
+/// Where the posts that are new since the last visit end.
+class _CaughtUp extends StatelessWidget {
+  const _CaughtUp();
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Row(
+      children: [
+        Expanded(child: Divider(color: pawPink.withValues(alpha: .5))),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.check_circle_outline_rounded,
+                size: 16,
+                color: pawPink,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                "You're caught up",
+                style: TextStyle(
+                  color: ink(.7),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(child: Divider(color: pawPink.withValues(alpha: .5))),
+      ],
+    ),
+  );
 }

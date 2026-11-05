@@ -47,16 +47,37 @@ ForYouSignals _signals({
   List<Follow> follows = const [],
   List<Like> likes = const [],
   List<Favorite> favorites = const [],
+  List<Like> dislikes = const [],
+  Blocklist? blocklist,
   double share = .65,
 }) => (
   follows: follows,
   likes: likes,
   favorites: favorites,
+  dislikes: dislikes,
+  blocklist: blocklist ?? Blocklist(),
   followingShare: share,
 );
 
 void main() {
   group('Taste', () {
+    test('not interested pushes an artist and its tags down', () {
+      final post = _post('1', 'meh', tags: ['Spiders']);
+      final other = _post('2', 'fine', tags: ['cats']);
+      final before = Taste.from(_signals(), now: _now);
+      final after = Taste.from(
+        _signals(dislikes: [Like.of(post, _now)]),
+        now: _now,
+      );
+      expect(after.score(post, _now), lessThan(before.score(post, _now) - 2));
+      expect(
+        after.score(_post('3', 'fine', tags: ['SPIDERS']), _now),
+        lessThan(after.score(other, _now)),
+      );
+      expect(after.disliked, contains(post.key));
+      expect(after.aversion('patreon/meh'), greaterThan(0));
+    });
+
     test('a fresh like counts more than an old one', () {
       final taste = Taste.from(
         _signals(likes: [_like('new'), _like('old', daysAgo: 90)]),
@@ -211,6 +232,25 @@ void main() {
       expect(feed.posts, hasLength(30));
       expect(feed.posts.every((p) => p.id.startsWith('r')), isTrue);
       expect(requests, ['recent 0']);
+    });
+
+    test('leaves out blocked and dismissed posts', () async {
+      final dismissed = _post('r0', 'stranger0', hoursAgo: 0);
+      final feed = ForYouFeed.custom(
+        recent: recent,
+        creatorPosts: creatorPosts,
+        signals: () => _signals(
+          dislikes: [Like.of(dismissed, _now)],
+          blocklist: Blocklist().withCreator(
+            const Creator(id: 'stranger1', service: 'patreon', name: 's'),
+          ),
+        ),
+        random: Random(1),
+      );
+      await feed.loadMore();
+      expect(feed.posts, hasLength(30));
+      expect(feed.posts.any((p) => p.key == dismissed.key), isFalse);
+      expect(feed.posts.any((p) => p.user == 'stranger1'), isFalse);
     });
 
     test('draws mostly from followed artists, a few per page', () async {

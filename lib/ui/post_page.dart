@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/api.dart';
 import '../core/models.dart';
@@ -22,6 +23,7 @@ class PostPage extends StatefulWidget {
     String? service,
     String? creatorId,
     String? postId,
+    this.embedded = false,
   }) : initial = post,
        service = post?.service ?? service!,
        creatorId = post?.user ?? creatorId!,
@@ -31,6 +33,10 @@ class PostPage extends StatefulWidget {
   final String service;
   final String creatorId;
   final String postId;
+
+  /// Shown inside another page (Random), so the newer and older posts open
+  /// on top of it instead of replacing it.
+  final bool embedded;
 
   @override
   State<PostPage> createState() => _PostPageState();
@@ -46,6 +52,12 @@ class _PostPageState extends State<PostPage> {
   void initState() {
     super.initState();
     _post = widget.initial;
+    final initial = widget.initial;
+    if (initial != null) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => AppScope.read(context).recordPost(initial),
+      );
+    }
     _load();
   }
 
@@ -62,6 +74,7 @@ class _PostPageState extends State<PostPage> {
           _post = post;
           _error = null;
         });
+        AppScope.read(context).recordPost(post);
       }
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
@@ -119,6 +132,20 @@ class _PostPageState extends State<PostPage> {
         builder: (_) => CreatorPage(creator: creator, initialTag: tag),
       ),
     );
+  }
+
+  /// Opens the artist's post before or after this one in place of it.
+  void _openNeighbor(String postId) {
+    HapticFeedback.selectionClick();
+    final route = MaterialPageRoute<void>(
+      builder: (_) => PostPage(
+        service: widget.service,
+        creatorId: widget.creatorId,
+        postId: postId,
+      ),
+    );
+    final navigator = Navigator.of(context);
+    widget.embedded ? navigator.push(route) : navigator.pushReplacement(route);
   }
 
   @override
@@ -287,6 +314,40 @@ class _PostPageState extends State<PostPage> {
             ),
           ),
         ],
+        if (post.prevId != null || post.nextId != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+            child: Row(
+              children: [
+                // Pawchive's `prev` is the newer post and `next` the older.
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: post.prevId == null
+                        ? null
+                        : () => _openNeighbor(post.prevId!),
+                    icon: const Icon(Icons.chevron_left_rounded),
+                    label: const Text('Newer post'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: post.nextId == null
+                        ? null
+                        : () => _openNeighbor(post.nextId!),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text('Older post'),
+                        SizedBox(width: 8),
+                        Icon(Icons.chevron_right_rounded, size: 18),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         SectionLabel('Comments', key: _commentsKey),
         _comments == null
             ? Padding(
