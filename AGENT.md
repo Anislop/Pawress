@@ -44,7 +44,7 @@ lib/
     updates.dart       UpdateChecker, pushable, Notifier (local notifications, banner channel, download progress), DownloadNotification, BackgroundUpdates (WorkManager)
     downloads.dart     DownloadManager queue (2 at once, 1 s apart) writing to a SAF folder via DownloadTarget
     app_update.dart    AppUpdater: GitHub releases check (AppRelease.newest) and install via the pawress/updater channel
-    intents.dart       AndroidIntents (pawress/intents channel): links in, shareFile / setAs out, isMetered
+    intents.dart       AndroidIntents (pawress/intents channel): links in, shareFile / setAs / viewFile / viewFolder out, isMetered
     app_state.dart     AppState: settings, account, follows + bells, likes, favorites, blocklist + dislikes, history, notices + in-app alerts, sync, backup
   ui/
     app_scope.dart     AppScope.of(context) / AppScope.read(context) give AppState
@@ -88,7 +88,7 @@ test/
   downloads_test.dart       DownloadManager: URL resolution, naming, failure and retry (in-memory target)
   filters_test.dart         Blocklist, Visit, links in shared text, new settings, AppState blocking / not interested / history / Following marker
   app_update_test.dart      Release picking, nightly notes, AppUpdater over a mocked channel and GitHub
-android/app/src/main/kotlin/.../MainActivity.kt   pawress/updater channel: appVersion, installUpdate, notificationSettings; pawress/intents: initialLink, link, shareFile, setAs, isMetered
+android/app/src/main/kotlin/.../MainActivity.kt   pawress/updater channel: appVersion, installUpdate, notificationSettings; pawress/intents: initialLink, link, shareFile, setAs, viewFile, viewFolder, isMetered
 .github/workflows/          ci.yml (PRs, and called by CD) and cd.yml (nightly / tagged releases)
 docs/pawchive-api.md        API reference and quirks
 docs/IMPLEMENTATION1.md     Backlog of ideas not built yet, with where each would go
@@ -262,7 +262,11 @@ docs/IMPLEMENTATION1.md     Backlog of ideas not built yet, with where each woul
   flutter_local_notifications' foreground service (`dataSync`), so the
   queue keeps going in the background; it posts a summary when it ends
   off screen. The service stops with the task, so swiping Pawress out of
-  recents still ends downloads.
+  recents still ends downloads. On the Downloads page a saved file opens
+  on tap (View, `ACTION_VIEW` on its SAF document URI, `DownloadTask.savedUri`),
+  and its check mark and the app bar's folder icon offer View folder: a
+  directory document opened in Files, or the folder picker started there
+  (`EXTRA_INITIAL_URI`) when nothing handles that.
 - **App updates.** Modeled on BooruPlus. CD builds with
   `--build-number=<run number>` and `--dart-define=UPDATE_REPOSITORY=<repo>`
   and attaches `pawress-<version>-<build>.apk` to the `nightly` prerelease

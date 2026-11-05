@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:saf_util/saf_util.dart';
 
 import '../core/downloads.dart';
+import '../core/intents.dart';
 import '../core/models.dart';
 import 'app_scope.dart';
 import 'theme.dart';
@@ -70,21 +71,50 @@ Future<void> downloadFiles(
     );
 }
 
+/// Opens a finished download in an app that can show it.
+Future<void> viewDownload(BuildContext context, DownloadTask task) async {
+  final uri = task.savedUri;
+  final messenger = ScaffoldMessenger.of(context);
+  final opened = uri != null && await AndroidIntents.viewFile(uri, task.mime);
+  if (!opened) _cantOpen(messenger, 'No app can open this file.');
+}
+
+/// Opens a download folder in the phone's file browser.
+Future<void> viewDownloadFolder(BuildContext context, String folderUri) async {
+  final messenger = ScaffoldMessenger.of(context);
+  if (!await AndroidIntents.viewFolder(folderUri)) {
+    _cantOpen(messenger, 'No file browser can open this folder.');
+  }
+}
+
+void _cantOpen(ScaffoldMessengerState messenger, String message) => messenger
+  ..hideCurrentSnackBar()
+  ..showSnackBar(SnackBar(content: Text(message)));
+
 /// The download queue: progress, failures with retry, and finished files.
 class DownloadsPage extends StatelessWidget {
   const DownloadsPage({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final downloads = AppScope.read(context).downloads;
+    final state = AppScope.read(context);
+    final downloads = state.downloads;
     return ListenableBuilder(
       listenable: downloads,
       builder: (context, _) {
         final tasks = downloads.tasks.reversed.toList();
+        final folder =
+            tasks.firstOrNull?.folderUri ?? state.settings.downloadFolderUri;
         return Scaffold(
           appBar: AppBar(
             title: const Text('Downloads'),
             actions: [
+              if (folder != null)
+                IconButton(
+                  tooltip: 'View folder',
+                  icon: const Icon(Icons.folder_open_rounded),
+                  onPressed: () => viewDownloadFolder(context, folder),
+                ),
               if (tasks.any((task) => task.finished))
                 TextButton(
                   onPressed: downloads.clearFinished,
@@ -128,8 +158,12 @@ class _DownloadTile extends StatelessWidget {
       DownloadStatus.done => 'Saved to ${task.folderName}',
       DownloadStatus.failed => task.error ?? 'Failed',
     };
+    final saved = task.status == DownloadStatus.done;
     return ListTile(
       contentPadding: const EdgeInsets.fromLTRB(14, 6, 8, 6),
+      onTap: saved && task.savedUri != null
+          ? () => viewDownload(context, task)
+          : null,
       leading: ClipRRect(
         borderRadius: BorderRadius.circular(8),
         child: SizedBox.square(
@@ -177,9 +211,29 @@ class _DownloadTile extends StatelessWidget {
           icon: const Icon(Icons.refresh_rounded),
           onPressed: () => AppScope.read(context).downloads.retry(task),
         ),
-        DownloadStatus.done => const Icon(
-          Icons.check_circle_rounded,
-          color: pawPink,
+        DownloadStatus.done => PopupMenuButton<bool>(
+          tooltip: 'Open',
+          icon: const Icon(Icons.check_circle_rounded, color: pawPink),
+          onSelected: (file) => file
+              ? viewDownload(context, task)
+              : viewDownloadFolder(context, task.folderUri),
+          itemBuilder: (_) => [
+            if (task.savedUri != null)
+              const PopupMenuItem(
+                value: true,
+                child: ListTile(
+                  leading: Icon(Icons.open_in_new_rounded),
+                  title: Text('View'),
+                ),
+              ),
+            const PopupMenuItem(
+              value: false,
+              child: ListTile(
+                leading: Icon(Icons.folder_open_rounded),
+                title: Text('View folder'),
+              ),
+            ),
+          ],
         ),
         _ => null,
       },
