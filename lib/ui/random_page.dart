@@ -54,7 +54,7 @@ class _RandomPageState extends State<RandomPage> {
           final link = await api.randomPost();
           final post = link.post;
           if (post == null) {
-            throw const ApiException('Pawchive did not pick a post.');
+            throw const ApiException('The site did not pick a post.');
           }
           page = PostPage(
             key: ValueKey(++_round),
@@ -91,6 +91,7 @@ class _RandomPageState extends State<RandomPage> {
   /// Asks posts or artists. Dismissing the first ask leaves the page.
   Future<void> _choose({bool first = false}) async {
     final state = AppScope.read(context);
+    final site = state.browse;
     final kind = await showModalBottomSheet<RandomKind>(
       context: context,
       useSafeArea: true,
@@ -106,6 +107,10 @@ class _RandomPageState extends State<RandomPage> {
               'What should Random pick?',
               style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
             ),
+          ),
+          const Padding(
+            padding: EdgeInsets.only(left: 6, bottom: 8),
+            child: ProviderChips(),
           ),
           for (final (kind, icon, label, detail) in const [
             (
@@ -136,11 +141,16 @@ class _RandomPageState extends State<RandomPage> {
       ),
     );
     if (!mounted) return;
+    final moved = state.browse != site;
     if (kind == null) {
-      if (first) Navigator.of(context).maybePop();
+      if (first) {
+        Navigator.of(context).maybePop();
+      } else if (moved) {
+        await _roll();
+      }
       return;
     }
-    final changed = kind != _kind;
+    final changed = kind != _kind || moved;
     _kind = kind;
     await state.updateSettings(state.settings.copyWith(randomKind: kind));
     if (changed || _shown == null) await _roll();

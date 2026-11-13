@@ -13,12 +13,12 @@ import 'models.dart';
 import 'store.dart';
 
 /// Finds new posts from followed creators. Shared by the in-app refresh and
-/// the Android background task, so it only talks to [PawchiveApi] and
+/// the Android background task, so it only talks to [ArchiveApi] and
 /// [Store].
 class UpdateChecker {
   UpdateChecker(this.api, this.store);
 
-  final PawchiveApi api;
+  final ArchiveApi api;
   final Store store;
 
   /// Most notices recorded per creator per check, so a bulk import does not
@@ -33,10 +33,15 @@ class UpdateChecker {
   /// following someone never notifies about their back catalogue.
   Future<List<UpdateNotice>> check() async {
     final follows = await store.follows();
+    // Loading settings also points providers at their mirrors.
+    final enabled = (await store.settings()).enabledProviders;
     final updated = <String, Follow>{};
     final found = <UpdateNotice>[];
     for (final follow in follows) {
-      if (follow.notify == NotifyLevel.off) continue;
+      if (follow.notify == NotifyLevel.off ||
+          !enabled.contains(follow.creator.provider)) {
+        continue;
+      }
       try {
         final result = await _checkOne(follow);
         updated[follow.key] = result.follow;
@@ -552,7 +557,7 @@ void backgroundDispatcher() {
     final store = Store();
     final settings = await store.settings();
     if (!settings.notificationsEnabled) return true;
-    final api = PawchiveApi(session: await store.session());
+    final api = ArchiveApi(session: await store.session());
     try {
       final notices = pushable(
         await UpdateChecker(api, store).check(),

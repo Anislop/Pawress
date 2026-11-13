@@ -33,7 +33,7 @@ class _LoginPageState extends State<LoginPage> {
         onUrlChange: (change) => _check(change.url),
       ),
     )
-    ..loadRequest(Uri.parse(loginUrl));
+    ..loadRequest(Uri.parse(Provider.pawchive.loginUrl));
 
   String? _username;
   double _progress = 0;
@@ -54,13 +54,15 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _check(String? url) async {
     final uri = url == null ? null : Uri.tryParse(url);
-    if (_busy || uri == null || uri.host != siteHost) return;
+    if (_busy || uri == null || uri.host != Provider.pawchive.host) return;
     if (uri.path.startsWith('/account/login') ||
         uri.path.startsWith('/account/register')) {
       await _web.runJavaScript(_captureUsername);
       return;
     }
-    final cookies = await _cookies.getCookies(domain: Uri.parse(siteUrl));
+    final cookies = await _cookies.getCookies(
+      domain: Uri.parse(Provider.pawchive.siteUrl),
+    );
     final session = cookies
         .where((c) => c.name.trim() == sessionCookie)
         .firstOrNull
@@ -71,7 +73,7 @@ class _LoginPageState extends State<LoginPage> {
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
     // Confirm the cookie works before keeping it.
-    final probe = PawchiveApi(session: session);
+    final probe = ArchiveApi(session: session);
     try {
       await probe.favoriteCreators();
     } on ApiException catch (e) {

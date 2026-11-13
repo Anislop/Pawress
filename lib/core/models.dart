@@ -47,6 +47,26 @@ List<String> parseTags(Object? value) {
   ].where((tag) => tag.isNotEmpty && tag != 'NULL').toList();
 }
 
+final _tagHashes = RegExp(r'^#+');
+
+/// Coomer makes tags from a post's hashtags and leaves markup on them
+/// ("ads</p>", "ai</p><p>#advertising</p>", "#"); this keeps the word.
+String cleanTag(String tag) {
+  final cut = tag.indexOf('<');
+  return (cut < 0 ? tag : tag.substring(0, cut))
+      .replaceFirst(_tagHashes, '')
+      .trim();
+}
+
+/// [tags] through [cleanTag], without the empty and repeated ones it leaves.
+List<String> cleanTags(List<String> tags) {
+  final seen = <String>{};
+  return [
+    for (final tag in tags.map(cleanTag))
+      if (tag.isNotEmpty && seen.add(tag.toLowerCase())) tag,
+  ];
+}
+
 /// The site an archived creator comes from.
 class Service {
   const Service(this.id, this.label, this.color, this.profileUrl);
@@ -113,14 +133,40 @@ class Service {
       0xFF946CE6,
       (id, publicId) => 'https://afdian.com/a/${publicId ?? id}',
     ),
+    'onlyfans': Service(
+      'onlyfans',
+      'OnlyFans',
+      0xFF00AFF0,
+      (id, _) => 'https://onlyfans.com/$id',
+    ),
+    'fansly': Service(
+      'fansly',
+      'Fansly',
+      0xFF2699F7,
+      (id, _) => 'https://fansly.com/$id',
+    ),
+    'candfans': Service(
+      'candfans',
+      'CandFans',
+      0xFFE8486F,
+      (id, _) => 'https://candfans.jp/$id',
+    ),
   };
 
   static Service of(String id) =>
       _known[id] ??
-      Service(id, id.isEmpty ? 'Unknown' : id, 0xFF8F6B7E, (_, _) => siteUrl);
+      Service(
+        id,
+        id.isEmpty ? 'Unknown' : id,
+        0xFF8F6B7E,
+        (_, _) => Provider.of(id).siteUrl,
+      );
 
-  /// Pawchive's own small site icon.
-  String get iconUrl => '$siteUrl/static/small_icons/$id.png';
+  /// The archive this site's creators are on.
+  Provider get provider => Provider.of(id);
+
+  /// The archive's own small site icon.
+  String get iconUrl => '${provider.siteUrl}/static/small_icons/$id.png';
 }
 
 /// An archived creator ("artist").
@@ -147,9 +193,12 @@ class Creator {
   String get key => '$service/$id';
 
   Service get site => Service.of(service);
-  String get iconUrl => '$siteUrl/icons/$service/$id';
-  String get bannerUrl => '$siteUrl/banners/$service/$id';
-  String get pawchiveUrl => '$siteUrl/$service/user/$id';
+  Provider get provider => Provider.of(service);
+  String get iconUrl => '${provider.artBase}/icons/$service/$id';
+  String get bannerUrl => '${provider.artBase}/banners/$service/$id';
+
+  /// The creator's page on the archive.
+  String get pawchiveUrl => '${provider.siteUrl}/$service/user/$id';
   String get originalUrl => site.profileUrl(id, publicId);
 
   factory Creator.fromJson(Map<String, dynamic> json) => Creator(
@@ -228,7 +277,7 @@ enum MediaKind { image, video, audio, other }
 /// A file attached to a post. Pawchive has two kinds:
 ///
 /// * Archived files (`preview_only` false, usually with a `node`) are served
-///   from the file host at [fileBase] + path.
+///   from the file host at [Provider.fileBase] + path.
 /// * Preview-only files are only reachable through [tempUrl], a signed URL
 ///   that expires after about two weeks and only comes with creator post
 ///   lists and single posts, not the site-wide recent feed.
@@ -238,12 +287,19 @@ class MediaFile {
     required this.path,
     this.tempUrl,
     this.previewOnly = false,
+    this.service = '',
   });
 
   final String name;
   final String path;
   final String? tempUrl;
   final bool previewOnly;
+
+  /// The post's service, which decides the hosts the file is on. Not
+  /// stored; [Post.fromJson] fills it in.
+  final String service;
+
+  Provider get provider => Provider.of(service);
 
   static const _images = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'avif'};
   static const _videos = {'mp4', 'webm', 'mov', 'm4v', 'mkv'};
@@ -270,24 +326,30 @@ class MediaFile {
   bool get isViewable => isImage || isVideo;
 
   /// A resized still; only images have one.
-  String? get thumbnailUrl => isImage ? '$thumbnailBase$path' : null;
+  String? get thumbnailUrl => isImage ? '${provider.thumbnailBase}$path' : null;
 
   /// The original file, or null for a preview-only file whose post must be
   /// fetched again to get a signed [tempUrl].
   String? get fullUrl =>
       tempUrl ??
-      (previewOnly ? null : '$fileBase$path?f=${Uri.encodeComponent(name)}');
+      (previewOnly
+          ? null
+          : '${provider.fileBase}$path?f=${Uri.encodeComponent(name)}');
 
-  factory MediaFile.fromJson(Map<String, dynamic> json) => MediaFile(
+  factory MediaFile.fromJson(
+    Map<String, dynamic> json, [
+    String service = '',
+  ]) => MediaFile(
     name: _str(json['name']),
     path: _str(json['path']),
     tempUrl: _optStr(json['temp_url']),
     previewOnly: _bool(json['preview_only']),
+    service: service,
   );
 
-  static MediaFile? tryParse(Object? json) {
+  static MediaFile? tryParse(Object? json, [String service = '']) {
     if (json is! Map<String, dynamic>) return null;
-    final file = MediaFile.fromJson(json);
+    final file = MediaFile.fromJson(json, service);
     return file.path.isEmpty ? null : file;
   }
 
@@ -411,7 +473,8 @@ class Post {
 
   /// Unique across services, used as the favorite key.
   String get key => '$service/$user/$id';
-  String get url => '$siteUrl/$service/user/$user/post/$id';
+  Provider get provider => Provider.of(service);
+  String get url => '${provider.siteUrl}/$service/user/$user/post/$id';
 
   /// The main file followed by attachments, without repeats.
   List<MediaFile> get files {
@@ -440,25 +503,31 @@ class Post {
     poll: poll,
   );
 
-  factory Post.fromJson(Map<String, dynamic> json) => Post(
-    id: _str(json['id']),
-    user: _str(json['user']),
-    service: _str(json['service']),
-    title: _str(json['title']),
-    content: _str(json['content'] ?? json['substring']),
-    published: parseDate(json['published']),
-    added: parseDate(json['added']),
-    file: MediaFile.tryParse(json['file']),
-    attachments: [
-      for (final item in (json['attachments'] as List? ?? const []))
-        ?MediaFile.tryParse(item),
-    ],
-    tags: parseTags(json['tags']),
-    nextId: _optStr(json['next']),
-    prevId: _optStr(json['prev']),
-    favorites: json['favorites'] == null ? null : _int(json['favorites']),
-    poll: Poll.tryParse(json['poll']),
-  );
+  factory Post.fromJson(Map<String, dynamic> json) {
+    final service = _str(json['service']);
+    final tags = parseTags(json['tags']);
+    // Coomer's popular posts call the count `fav_count`.
+    final favorites = json['favorites'] ?? json['fav_count'];
+    return Post(
+      id: _str(json['id']),
+      user: _str(json['user']),
+      service: service,
+      title: _str(json['title']),
+      content: _str(json['content'] ?? json['substring']),
+      published: parseDate(json['published']),
+      added: parseDate(json['added']),
+      file: MediaFile.tryParse(json['file'], service),
+      attachments: [
+        for (final item in (json['attachments'] as List? ?? const []))
+          ?MediaFile.tryParse(item, service),
+      ],
+      tags: Provider.of(service).spa ? cleanTags(tags) : tags,
+      nextId: _optStr(json['next']),
+      prevId: _optStr(json['prev']),
+      favorites: favorites == null ? null : _int(favorites),
+      poll: Poll.tryParse(json['poll']),
+    );
+  }
 
   /// The fields [Post.fromJson] reads, for keeping favorites on the device.
   Map<String, dynamic> toJson() => {
@@ -501,7 +570,7 @@ class CreatorTag {
       CreatorTag(_str(json['tag']), _int(json['post_count']));
 }
 
-/// A post or artist page on Pawchive, as the random pages redirect to:
+/// A post or artist page on an archive, as the random pages redirect to:
 /// `/{service}/user/{user}[/post/{post}]`.
 class PawchiveLink {
   const PawchiveLink({required this.service, required this.user, this.post});
@@ -514,19 +583,18 @@ class PawchiveLink {
     r'/([\w-]+)/user/([^/?#]+)(?:/post/([^/?#]+))?',
   );
 
-  /// The first pawchive.pw address in [text], such as a link shared from a
-  /// browser or chat app with words around it.
-  static Uri? findUrl(String text) {
-    final match = _url.firstMatch(text);
-    return match == null ? null : Uri.tryParse(match.group(0)!);
-  }
+  static final _url = RegExp(r'https?://[^\s<>"]+', caseSensitive: false);
 
-  static final _url = RegExp(
-    r'https?://(?:www\.)?' +
-        RegExp.escape(siteHost) +
-        r'(?![\w.-])(?:[/?#:][^\s<>"]*)?',
-    caseSensitive: false,
-  );
+  /// The first address on a provider's site (its host or a mirror in use)
+  /// in [text], such as a link shared from a browser or chat app with words
+  /// around it.
+  static Uri? findUrl(String text) {
+    for (final match in _url.allMatches(text)) {
+      final uri = Uri.tryParse(match.group(0)!);
+      if (uri != null && Provider.atHost(uri.host) != null) return uri;
+    }
+    return null;
+  }
 
   static PawchiveLink? tryParse(String url) {
     final match = _pattern.firstMatch(url);
@@ -962,8 +1030,9 @@ class UpdateNotice {
   final String? thumbnailPath;
   final bool read;
 
-  String? get thumbnailUrl =>
-      thumbnailPath == null ? null : '$thumbnailBase$thumbnailPath';
+  String? get thumbnailUrl => thumbnailPath == null
+      ? null
+      : '${creator.provider.thumbnailBase}$thumbnailPath';
 
   UpdateNotice markRead() => UpdateNotice(
     id: id,

@@ -285,17 +285,14 @@ List<Post> takeBest(
 /// artist never fills consecutive rows. Without follows or likes it is the
 /// recent feed.
 class ForYouFeed extends Feed {
-  ForYouFeed(
-    PawchiveApi api,
-    ForYouSignals Function() signals, {
-    Random? random,
-  }) : this.custom(
-         recent: (offset) => api.recentPosts(offset: offset),
-         creatorPosts: (creator) =>
-             api.creatorPosts(creator.service, creator.id),
-         signals: signals,
-         random: random,
-       );
+  ForYouFeed(ArchiveApi api, ForYouSignals Function() signals, {Random? random})
+    : this.custom(
+        recent: (offset) => api.recentPosts(offset: offset),
+        creatorPosts: (creator) =>
+            api.creatorPosts(creator.service, creator.id),
+        signals: signals,
+        random: random,
+      );
 
   @visibleForTesting
   ForYouFeed.custom({

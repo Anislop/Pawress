@@ -110,7 +110,7 @@ class DownloadManager extends ChangeNotifier {
   }) : _client = client ?? http.Client(),
        _target = target ?? SafTarget();
 
-  final PawchiveApi _api;
+  final ArchiveApi _api;
   final http.Client _client;
   final DownloadTarget _target;
   final int parallel;

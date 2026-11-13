@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'api.dart';
 import 'app_update.dart';
 import 'backup.dart';
+import 'config.dart';
 import 'creators.dart';
 import 'downloads.dart';
 import 'for_you.dart';
@@ -17,9 +18,9 @@ import 'updates.dart';
 /// and update notices. Screens listen to it and call its methods; it persists every
 /// change through [Store].
 class AppState extends ChangeNotifier {
-  AppState({Store? store, PawchiveApi? api})
+  AppState({Store? store, ArchiveApi? api})
     : store = store ?? Store(),
-      api = api ?? PawchiveApi() {
+      api = api ?? ArchiveApi() {
     this.api.onUnauthorized = () => unawaited(_expireSession());
     directory = CreatorDirectory(this.api);
     downloads = DownloadManager(this.api)
@@ -41,7 +42,7 @@ class AppState extends ChangeNotifier {
       _downloadNotification ??= DownloadNotification(downloads);
 
   final Store store;
-  final PawchiveApi api;
+  final ArchiveApi api;
   late final CreatorDirectory directory;
   late final DownloadManager downloads;
   final updater = AppUpdater();
@@ -86,14 +87,82 @@ class AppState extends ChangeNotifier {
   List<UpdateNotice>? _alert;
 
   Future<List<Creator>>? _allCreators;
-  Future<List<CreatorTag>>? _popularTags;
+  final _popularTags = <Provider, Future<List<CreatorTag>>>{};
 
   bool get signedIn => api.session != null;
+
+  /// Signed in, and [service] is on the provider the account belongs to;
+  /// only Pawchive has accounts in Pawress so far.
+  bool _syncs(String service) =>
+      signedIn && Provider.of(service) == Provider.pawchive;
+
+  // Providers.
+
+  bool providerEnabled(Provider provider) => api.isEnabled(provider);
+
+  /// More than one provider is on, so pages that show one site's popular
+  /// posts, tags or random picks offer a choice.
+  bool get manyProviders => api.enabled.length > 1;
+
+  /// The provider those pages show.
+  Provider get browse => api.browse;
+
+  void setBrowse(Provider provider) {
+    if (provider == api.browse) return;
+    api.browse = provider;
+    notifyListeners();
+  }
+
+  /// Changes when the enabled providers or their hosts do; feeds built
+  /// from them are rebuilt when it differs.
+  String get sourceKey => [
+    for (final provider in Provider.all)
+      if (providerEnabled(provider)) provider.host,
+  ].join(',');
+
+  /// Follows on enabled providers: the ones shown in Following, mixed
+  /// into For You and checked for new posts.
+  List<Follow> get activeFollows => [
+    for (final follow in follows)
+      if (providerEnabled(follow.creator.provider)) follow,
+  ];
+
+  /// Switches a provider on or off in the sidebar. The last one stays on.
+  /// A provider's follows, likes and favorites are kept while it is off.
+  Future<void> setProviderEnabled(Provider provider, bool enabled) async {
+    final ids = {...settings.providers};
+    enabled ? ids.add(provider.id) : ids.remove(provider.id);
+    if (ids.isEmpty || ids.length == settings.providers.length) return;
+    await updateSettings(settings.copyWith(providers: ids));
+  }
+
+  /// Points [provider] at a mirror, or back at its default host with null.
+  Future<void> setMirror(Provider provider, String? host) async {
+    final mirrors = {...settings.mirrors}..remove(provider.id);
+    if (host != null && host != provider.defaultHost) {
+      mirrors[provider.id] = host;
+    }
+    await updateSettings(settings.copyWith(mirrors: mirrors));
+  }
+
+  void _applyProviders() {
+    settings.applyMirrors();
+    final enabled = settings.enabledProviders;
+    api.enabled = enabled.isEmpty ? {Provider.pawchive} : enabled;
+    if (_sources != sourceKey) {
+      _sources = sourceKey;
+      _allCreators = null;
+      _popularTags.clear();
+    }
+  }
+
+  String? _sources;
   int get unreadNotices => notices.where((n) => !n.read).length;
 
   Future<void> init() async {
     onboarded = await store.onboarded();
     settings = await store.settings();
+    _applyProviders();
     api.session = await store.session();
     accountName = await store.accountName();
     follows = await store.follows();
@@ -164,6 +233,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> updateSettings(AppSettings value) async {
     settings = value;
+    _applyProviders();
     notifyListeners();
     await store.saveSettings(value);
     await _schedule();
@@ -173,7 +243,7 @@ class AppState extends ChangeNotifier {
     try {
       await BackgroundUpdates.apply(
         settings,
-        hasFollows: follows.any((f) => f.notify != NotifyLevel.off),
+        hasFollows: activeFollows.any((f) => f.notify != NotifyLevel.off),
       );
     } catch (e) {
       debugPrint('Could not schedule background updates: $e');
@@ -199,7 +269,7 @@ class AppState extends ChangeNotifier {
     ];
     await _saveFollows();
     unawaited(_baseline(creator.key));
-    if (signedIn) {
+    if (_syncs(creator.service)) {
       try {
         await api.addFavoriteCreator(creator.service, creator.id);
         _replace(creator.key, (f) => f.copyWith(synced: true));
@@ -213,7 +283,7 @@ class AppState extends ChangeNotifier {
   Future<void> unfollow(Creator creator) async {
     follows = follows.where((f) => f.key != creator.key).toList();
     await _saveFollows();
-    if (signedIn) {
+    if (_syncs(creator.service)) {
       try {
         await api.removeFavoriteCreator(creator.service, creator.id);
       } on ApiException catch (e) {
@@ -338,7 +408,7 @@ class AppState extends ChangeNotifier {
       ...favorites,
     ]);
     await _saveFavorites();
-    if (signedIn) {
+    if (_syncs(post.service)) {
       try {
         await api.addFavoritePost(post);
         _setFavorites([
@@ -355,7 +425,7 @@ class AppState extends ChangeNotifier {
   Future<void> unfavorite(Post post) async {
     _setFavorites(favorites.where((f) => f.key != post.key).toList());
     await _saveFavorites();
-    if (signedIn) {
+    if (_syncs(post.service)) {
       try {
         await api.removeFavoritePost(post);
       } on ApiException catch (e) {
@@ -403,9 +473,19 @@ class AppState extends ChangeNotifier {
 
   /// What For You learns from, read for each page.
   ForYouSignals forYouSignals() => (
-    follows: follows,
-    likes: likes,
-    favorites: favorites,
+    follows: activeFollows,
+    likes: manyProviders
+        ? likes
+        : [
+            for (final like in likes)
+              if (providerEnabled(Provider.of(like.service))) like,
+          ],
+    favorites: manyProviders
+        ? favorites
+        : [
+            for (final favorite in favorites)
+              if (providerEnabled(favorite.post.provider)) favorite,
+          ],
     dislikes: dislikes,
     blocklist: blocklist,
     followingShare: settings.forYouMix.followingShare,
@@ -626,7 +706,7 @@ class AppState extends ChangeNotifier {
   /// on the account was removed on the website, so it is removed here too;
   /// anything never synced is added to the account.
   Future<void> syncFavorites() async {
-    if (!signedIn) return;
+    if (!signedIn || !providerEnabled(Provider.pawchive)) return;
     await _syncFollows();
     if (signedIn) await _syncLikes();
   }
@@ -639,7 +719,9 @@ class AppState extends ChangeNotifier {
       };
       final merged = <Follow>[];
       for (final follow in follows) {
-        if (remote.containsKey(follow.key)) {
+        if (!_syncs(follow.creator.service)) {
+          merged.add(follow);
+        } else if (remote.containsKey(follow.key)) {
           merged.add(follow.copyWith(synced: true));
         } else if (!follow.synced) {
           await api.addFavoriteCreator(
@@ -676,7 +758,9 @@ class AppState extends ChangeNotifier {
       };
       final merged = <Favorite>[];
       for (final favorite in favorites) {
-        if (remote.containsKey(favorite.key)) {
+        if (!_syncs(favorite.post.service)) {
+          merged.add(favorite);
+        } else if (remote.containsKey(favorite.key)) {
           merged.add(favorite.copyWith(synced: true));
         } else if (!favorite.synced) {
           await api.addFavoritePost(favorite.post);
@@ -699,7 +783,8 @@ class AppState extends ChangeNotifier {
 
   // Creator search.
 
-  /// Every creator, downloaded once per session for the search page.
+  /// Every enabled provider's creators, downloaded once per session for the
+  /// search page.
   Future<List<Creator>> allCreators() {
     final pending = _allCreators ??= api.allCreators();
     pending.catchError((Object _) {
@@ -709,11 +794,12 @@ class AppState extends ChangeNotifier {
     return pending;
   }
 
-  /// The site's popular tags, read once per session for Explore.
+  /// The browsed site's popular tags, read once per session for Explore.
   Future<List<CreatorTag>> popularTags() {
-    final pending = _popularTags ??= api.popularTags();
+    final provider = browse;
+    final pending = _popularTags[provider] ??= api.popularTags(provider);
     pending.catchError((Object _) {
-      _popularTags = null;
+      _popularTags.remove(provider);
       return <CreatorTag>[];
     });
     return pending;

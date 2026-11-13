@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/config.dart';
 import '../core/feeds.dart';
 import '../core/for_you.dart';
 import '../core/intents.dart';
@@ -56,6 +57,9 @@ class _HomeScreenState extends State<HomeScreen>
   StreamSubscription<String>? _links;
   String _followSignature = '';
 
+  /// The enabled providers and their hosts the feeds were loaded from.
+  String _sources = '';
+
   /// Looks for notices the background check wrote while the app is open.
   Timer? _poll;
   static const _pollInterval = Duration(minutes: 1);
@@ -65,7 +69,8 @@ class _HomeScreenState extends State<HomeScreen>
     super.initState();
     final state = AppScope.read(context);
     _forYou = ForYouFeed(state.api, state.forYouSignals);
-    _following = FollowingFeed(state.api, () => state.follows);
+    _following = FollowingFeed(state.api, () => state.activeFollows);
+    _sources = state.sourceKey;
     _followSignature = _signature();
     state.addListener(_onState);
     WidgetsBinding.instance.addObserver(this);
@@ -173,7 +178,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   String _signature() =>
-      AppScope.read(context).follows.map((f) => f.key).join(',');
+      AppScope.read(context).activeFollows.map((f) => f.key).join(',');
 
   void _onState() {
     final state = AppScope.read(context);
@@ -185,10 +190,14 @@ class _HomeScreenState extends State<HomeScreen>
     final alert = state.takeAlert();
     if (alert != null && mounted) _showAlert(alert);
     final signature = _signature();
-    if (signature != _followSignature) {
+    final moved = state.sourceKey != _sources;
+    _sources = state.sourceKey;
+    if (signature != _followSignature || moved) {
       _followSignature = signature;
       if (_following.posts.isNotEmpty || _following.done) _following.refresh();
     }
+    // A provider was switched or moved to a mirror in the sidebar.
+    if (moved && (_forYou.posts.isNotEmpty || _forYou.done)) _forYou.refresh();
   }
 
   /// An in-app banner for new posts, X style: the artist, what they posted
@@ -392,7 +401,7 @@ class _TabState extends State<_Tab> with AutomaticKeepAliveClientMixin {
   Widget build(BuildContext context) {
     super.build(context);
     final state = AppScope.of(context);
-    if (widget.feed is FollowingFeed && state.follows.isEmpty) {
+    if (widget.feed is FollowingFeed && state.activeFollows.isEmpty) {
       return CustomScrollView(
         slivers: [
           SliverOverlapInjector(
@@ -582,6 +591,8 @@ class Sidebar extends StatelessWidget {
                     ),
                   ),
                   const Divider(),
+                  for (final provider in Provider.all) _ProviderItem(provider),
+                  const Divider(),
                   _SidebarItem(
                     icon: Icons.settings_outlined,
                     label: 'Settings',
@@ -637,4 +648,121 @@ class _SidebarItem extends StatelessWidget {
         : null,
     onTap: onTap,
   );
+}
+
+/// A website in the sidebar: a switch to browse it and a gear for its
+/// mirror. The last one on can't be switched off.
+class _ProviderItem extends StatelessWidget {
+  const _ProviderItem(this.provider);
+
+  final Provider provider;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppScope.of(context);
+    final enabled = state.providerEnabled(provider);
+    return ListTile(
+      contentPadding: const EdgeInsets.only(left: 20, right: 8),
+      leading: Icon(
+        Icons.public_rounded,
+        size: 26,
+        color: ink(enabled ? 1 : .4),
+      ),
+      title: Text(
+        provider.name,
+        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+      ),
+      subtitle: Text(
+        provider.host,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: ink(.5)),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: 'Mirror',
+            icon: Icon(Icons.settings_outlined, color: ink(.7)),
+            onPressed: () => showMirrorDialog(context, provider),
+          ),
+          Switch(
+            value: enabled,
+            onChanged: enabled && !state.manyProviders
+                ? null
+                : (value) => state.setProviderEnabled(provider, value),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Asks for the address [provider] is read from, for when the site moves
+/// or a mirror works better.
+Future<void> showMirrorDialog(BuildContext context, Provider provider) async {
+  final state = AppScope.read(context);
+  final controller = TextEditingController(text: provider.host);
+  String? error;
+  final host = await showDialog<String>(
+    context: context,
+    builder: (dialog) => StatefulBuilder(
+      builder: (dialog, setState) {
+        void save() {
+          final host = Provider.parseHost(controller.text);
+          if (host == null) {
+            setState(
+              () => error = 'Enter an address like ${provider.defaultHost}',
+            );
+          } else {
+            Navigator.of(dialog).pop(host);
+          }
+        }
+
+        return AlertDialog(
+          backgroundColor: panel,
+          title: Text('${provider.name} mirror'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'The address Pawress reads ${provider.name} from. Its image '
+                'and file hosts are taken from it.',
+                style: TextStyle(color: ink(.7)),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                autocorrect: false,
+                keyboardType: TextInputType.url,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => save(),
+                decoration: InputDecoration(
+                  hintText: provider.defaultHost,
+                  errorText: error,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialog).pop(provider.defaultHost),
+              child: const Text('Reset'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialog).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(onPressed: save, child: const Text('Save')),
+          ],
+        );
+      },
+    ),
+  );
+  controller.dispose();
+  if (host != null && host != provider.host) {
+    await state.setMirror(provider, host);
+  }
 }

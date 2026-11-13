@@ -21,7 +21,7 @@ Read [pawchive-api.md](pawchive-api.md) before anything that adds requests.
   schema. It returned `[]` for a recent Patreon post (2026-11-05), so the
   item shape is unknown. Find a post that has revisions, write the format
   into `pawchive-api.md`, and add a `Revision` model with lenient parsing.
-- **Where.** `PawchiveApi.revisions`, a section on `PostPage` below the
+- **Where.** `ArchiveApi.revisions`, a section on `PostPage` below the
   attachments, loaded only when tapped (like comments) so opening a post
   costs no extra request.
 

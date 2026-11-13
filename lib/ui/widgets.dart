@@ -131,9 +131,12 @@ class ServiceBadge extends StatelessWidget {
 }
 
 /// Post, announcement and DM bodies. Links open outside the app; relative
-/// links point at Pawchive.
+/// links point at [base], or Pawchive.
 class HtmlContent extends StatelessWidget {
-  const HtmlContent(this.html, {super.key, this.fontSize = 15});
+  const HtmlContent(this.html, {super.key, this.fontSize = 15, this.base});
+
+  /// Where the text's relative links point.
+  final String? base;
 
   final String html;
   final double fontSize;
@@ -145,12 +148,42 @@ class HtmlContent extends StatelessWidget {
     customStylesBuilder: (element) => element.localName == 'a'
         ? {'color': isLight ? '#9E4A76' : '#E8B6D1'}
         : null,
-    onTapUrl: (url) => openExternal(url),
+    onTapUrl: (url) => openExternal(url, base: base),
   );
 }
 
-Future<bool> openExternal(String url) {
-  final uri = Uri.tryParse(url.startsWith('/') ? '$siteUrl$url' : url);
+/// Picks the site whose popular posts, tags or random picks are shown.
+/// Empty while only one provider is on.
+class ProviderChips extends StatelessWidget {
+  const ProviderChips({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppScope.of(context);
+    if (!state.manyProviders) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+      child: Wrap(
+        spacing: 8,
+        children: [
+          for (final provider in Provider.all)
+            if (state.providerEnabled(provider))
+              ChoiceChip(
+                label: Text(provider.name),
+                selected: provider == state.browse,
+                onSelected: (_) => state.setBrowse(provider),
+              ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Opens [url] in the browser. A relative one is on [base], or Pawchive.
+Future<bool> openExternal(String url, {String? base}) {
+  final uri = Uri.tryParse(
+    url.startsWith('/') ? '${base ?? Provider.pawchive.siteUrl}$url' : url,
+  );
   if (uri == null) return Future.value(false);
   return launchUrl(uri, mode: LaunchMode.externalApplication);
 }

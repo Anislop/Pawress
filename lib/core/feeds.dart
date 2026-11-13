@@ -54,7 +54,7 @@ abstract class Feed extends ChangeNotifier {
       // A response the models could not read; show it rather than hang.
       debugPrint('Feed failed: $e');
       if (generation == _generation) {
-        error = 'Pawchive sent something Pawress could not read.';
+        error = 'The site sent something Pawress could not read.';
       }
     } finally {
       if (generation == _generation) {
@@ -94,9 +94,10 @@ class OffsetFeed extends Feed {
 class PopularFeed extends Feed {
   PopularFeed(this._api);
 
-  final PawchiveApi _api;
+  final ArchiveApi _api;
   PopularPeriod _period = PopularPeriod.day;
   Map<PopularPeriod, PopularRange>? _ranges;
+  Provider? _provider;
   int _offset = 0;
 
   /// The range's start date, or null for the newest.
@@ -132,6 +133,11 @@ class PopularFeed extends Feed {
 
   @override
   Future<List<Post>> fetchNext() async {
+    // Range dates belong to the site they were read from.
+    if (_provider != _api.browse) {
+      _provider = _api.browse;
+      _ranges = null;
+    }
     var start = date;
     if (start == null && period != PopularPeriod.day) {
       _ranges ??= (await _api.popularPosts()).ranges;
@@ -160,7 +166,7 @@ class PopularFeed extends Feed {
 class FollowingFeed extends Feed {
   FollowingFeed(this._api, this._follows);
 
-  final PawchiveApi _api;
+  final ArchiveApi _api;
   final List<Follow> Function() _follows;
 
   /// Posts placed per [loadMore].

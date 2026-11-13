@@ -126,7 +126,9 @@ class _PostPageState extends State<PostPage> {
       ),
     );
     if (everyone == null || !mounted) return;
-    if (everyone) return openTag(context, tag);
+    if (everyone) {
+      return openTag(context, tag, provider: creator.provider);
+    }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => CreatorPage(creator: creator, initialTag: tag),
@@ -174,7 +176,7 @@ class _PostPageState extends State<PostPage> {
             ),
           if (post != null)
             IconButton(
-              tooltip: 'Open on Pawchive',
+              tooltip: 'Open on the site',
               icon: const Icon(Icons.open_in_new_rounded),
               onPressed: () => openExternal(post.url),
             ),
@@ -257,7 +259,16 @@ class _PostPageState extends State<PostPage> {
                     ),
                     if (plainText(post.content).isNotEmpty) ...[
                       const SizedBox(height: 12),
-                      HtmlContent(post.content),
+                      HtmlContent(
+                        post.content,
+                        // Coomer keeps the original site's relative links.
+                        base: post.provider.spa
+                            ? Uri.parse(
+                                Service.of(post.service)
+                                    .profileUrl(post.user, null),
+                              ).origin
+                            : post.provider.siteUrl,
+                      ),
                     ],
                   ],
                 ),

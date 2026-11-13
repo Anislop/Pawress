@@ -208,7 +208,7 @@ class _HashLookupPageState extends State<HashLookupPage> {
                   body: result != null && result.discordCount > 0
                       ? 'It is only in ${_messages(result.discordCount)} on '
                             'Discord.'
-                      : 'Pawchive has no file with this hash.',
+                      : 'No enabled site has a file with this hash.',
                 )
               else ...[
                 SectionLabel(

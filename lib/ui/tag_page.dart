@@ -8,18 +8,24 @@ import 'widgets.dart';
 
 /// Posts with a tag from every artist, newest first.
 class TagPostsPage extends StatefulWidget {
-  const TagPostsPage({super.key, required this.tag});
+  const TagPostsPage({super.key, required this.tag, this.provider});
 
   final String tag;
+
+  /// The site to search; the browsed one when null.
+  final Provider? provider;
 
   @override
   State<TagPostsPage> createState() => _TagPostsPageState();
 }
 
 class _TagPostsPageState extends State<TagPostsPage> {
+  late final Provider _provider =
+      widget.provider ?? AppScope.read(context).browse;
   late final OffsetFeed _posts = OffsetFeed(
     (offset) =>
-        AppScope.read(context).api.taggedPosts(widget.tag, offset: offset),
+        AppScope.read(context).api
+            .taggedPosts(widget.tag, offset: offset, provider: _provider),
   );
 
   @override
@@ -29,7 +35,7 @@ class _TagPostsPageState extends State<TagPostsPage> {
   }
 
   String get _url =>
-      '$siteUrl/posts?tag=${Uri.encodeQueryComponent(widget.tag)}';
+      '${_provider.siteUrl}/posts?tag=${Uri.encodeQueryComponent(widget.tag)}';
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -48,7 +54,7 @@ class _TagPostsPageState extends State<TagPostsPage> {
             ),
             PopupMenuItem(
               value: () => openExternal(_url),
-              child: const Text('Open on Pawchive'),
+              child: Text('Open on ${_provider.name}'),
             ),
           ],
         ),
@@ -66,6 +72,9 @@ class _TagPostsPageState extends State<TagPostsPage> {
   );
 }
 
-void openTag(BuildContext context, String tag) =>
-    Navigator.of(context)
-        .push(MaterialPageRoute<void>(builder: (_) => TagPostsPage(tag: tag)));
+void openTag(BuildContext context, String tag, {Provider? provider}) =>
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => TagPostsPage(tag: tag, provider: provider),
+      ),
+    );

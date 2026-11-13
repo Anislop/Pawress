@@ -322,9 +322,9 @@ class SettingsPage extends StatelessWidget {
               SettingsTile(
                 icon: Icons.public_rounded,
                 title: 'Open Pawchive',
-                subtitle: siteHost,
+                subtitle: Provider.pawchive.host,
                 trailing: const Icon(Icons.open_in_new_rounded, size: 18),
-                onTap: () => openExternal(siteUrl),
+                onTap: () => openExternal(Provider.pawchive.siteUrl),
               ),
             ],
           ),
@@ -469,8 +469,8 @@ class _VersionCardState extends State<_VersionCard> {
                 : '$appName ${snapshot.data!.label}',
           ),
           subtitle: const Text(
-            'An unofficial client for $siteHost. Updates come from GitHub '
-            'releases.',
+            'An unofficial client for Pawchive and Coomer. Updates come '
+            'from GitHub releases.',
           ),
           trailing: TextButton(
             onPressed: _checking ? null : _check,

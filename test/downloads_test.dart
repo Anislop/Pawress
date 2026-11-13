@@ -66,7 +66,7 @@ void main() {
       final target = _MemoryTarget();
       final idle = Completer<(int, int)>();
       final manager = DownloadManager(
-        PawchiveApi(client: client),
+        ArchiveApi(client: client),
         client: client,
         target: target,
         spacing: Duration.zero,
@@ -105,7 +105,7 @@ void main() {
     );
     final results = <(int, int)>[];
     final manager = DownloadManager(
-      PawchiveApi(client: client),
+      ArchiveApi(client: client),
       client: client,
       target: _MemoryTarget(),
       spacing: Duration.zero,

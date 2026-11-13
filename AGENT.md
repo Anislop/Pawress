@@ -6,9 +6,13 @@ is Android only (there's no `ios/` or other platform folder), and is laid out li
 X on Android. The only bottom bar is the Popular tab's Artists / Posts switch. Its structure and intro follow
 [BooruPlus](https://github.com/Anislop/BooruPlus).
 
+It can also read [Coomer](https://coomer.st) (OnlyFans, Fansly, CandFans) as a
+second provider, switched on in the sidebar.
+
 Read [docs/pawchive-api.md](docs/pawchive-api.md) before touching anything
-that talks to the network. It records the hosts, rate limits and API quirks
-the code depends on.
+that talks to the network, and [docs/coomer-api.md](docs/coomer-api.md) for
+what Coomer does differently. They record the hosts, rate limits and API
+quirks the code depends on.
 
 ## Commands
 
@@ -32,9 +36,9 @@ which breaks Kotlin incremental caches for plugin modules. Leave it.
 lib/
   main.dart            App root: splash -> onboarding -> home, revealed from the bottom
   core/                No widgets (except updates.dart's Flutter binding); safe for the background isolate
-    config.dart        Hosts, user agent, page size
+    config.dart        Provider (Pawchive, Coomer: hosts, mirror, services), user agent, page size
     models.dart        Creator, Post, MediaFile, Poll, Favorite, Like, Follow + NotifyLevel, Community*, UpdateNotice, PawchiveLink (+ findUrl), HashLookup, Blocklist, Visit, ... and JSON parsing; threadComments
-    api.dart           PawchiveApi (all HTTP); scrapers for DMs, popular posts, tags, tagged posts, similar artists, community chats; random redirects; hash lookup
+    api.dart           ArchiveApi (all HTTP; routes to SiteApi for Pawchive and CoomerApi by service); scrapers for DMs, popular posts, tags, tagged posts, similar artists, community chats; random redirects; hash lookup
     file_hash.dart     sha256Hex (streamed, for hash lookup) and isSha256
     store.dart         Store: SharedPreferencesAsync + secure storage (session cookie); AppSettings, ThemeChoice, DataSaver
     backup.dart        Backup file (follows, likes, blocklist, sign-in sealed with AES-GCM + PBKDF2), mergeFollows / mergeFavorites
@@ -49,10 +53,10 @@ lib/
   ui/
     app_scope.dart     AppScope.of(context) / AppScope.read(context) give AppState
     theme.dart         Palette (from assets; Plum, AMOLED, Light, Auto), buildTheme(), pinkText, BrandMark, SectionLabel
-    widgets.dart       NetImage, CreatorAvatar, ServiceBadge, HtmlContent, FeedView (hides blocked posts, "caught up" line), StatusView, BackToTop, scroll / copy / time / size helpers
+    widgets.dart       NetImage, CreatorAvatar, ServiceBadge, HtmlContent, FeedView (hides blocked posts, "caught up" line), StatusView, BackToTop, ProviderChips, scroll / copy / time / size helpers
     splash.dart        BooruPlus-style splash + revealFromBottom transition
     onboarding.dart    Four parallax slides (art lags, text leads), notification permission, optional sign-in
-    home.dart          HomeScreen (floating SliverAppBar + For You / Following / Popular tabs, Popular's bottom bar) and Sidebar (drawer)
+    home.dart          HomeScreen (floating SliverAppBar + For You / Following / Popular tabs, Popular's bottom bar), Sidebar (drawer, provider switches) and showMirrorDialog
     popular.dart       PopularTab: popular artists (from /creators, sorted on device) and PopularFeed posts
     post_card.dart     X-style post row, PostActions (comments / thumbs up / favorite), MediaGrid, showPostMenu, block / not interested helpers, openPost/openCreator/openViewer
     notify_bell.dart   NotifyBell (X-style bell beside Following) and showNotifySheet
@@ -87,10 +91,12 @@ test/
   update_checker_test.dart  UpdateChecker against a fake Pawchive (MockClient + in-memory prefs)
   downloads_test.dart       DownloadManager: URL resolution, naming, failure and retry (in-memory target)
   filters_test.dart         Blocklist, Visit, links in shared text, new settings, AppState blocking / not interested / history / Following marker
+  providers_test.dart       Provider hosts and mirrors, Coomer tags, popular JSON, CoomerApi and ArchiveApi routing over a MockClient
   app_update_test.dart      Release picking, nightly notes, AppUpdater over a mocked channel and GitHub
 android/app/src/main/kotlin/.../MainActivity.kt   pawress/updater channel: appVersion, installUpdate, notificationSettings; pawress/intents: initialLink, link, shareFile, setAs, viewFile, viewFolder, isMetered
 .github/workflows/          ci.yml (PRs, and called by CD) and cd.yml (nightly / tagged releases)
 docs/pawchive-api.md        API reference and quirks
+docs/coomer-api.md          What Coomer's API does differently
 docs/IMPLEMENTATION1.md     Backlog of ideas not built yet, with where each would go
 ```
 
@@ -98,7 +104,22 @@ docs/IMPLEMENTATION1.md     Backlog of ideas not built yet, with where each woul
 
 - **State.** One `AppState` (`ChangeNotifier`) is provided by `AppScope`. There's
   no state-management package. Pages own their `Feed`s and dispose them.
-- **Network.** Everything goes through `PawchiveApi`, and every image and
+- **Providers.** `Provider.pawchive` and `Provider.coomer` hold each
+  site's hosts; a service belongs to one provider (`Provider.of`), so
+  models build their URLs from the service and nothing stored names a
+  provider. The sidebar switches each on or off (`AppSettings.providers`,
+  Pawchive only by default, never empty) and its gear sets a mirror host
+  (`AppSettings.mirrors`, applied to `Provider.host` by
+  `AppSettings.applyMirrors` whenever settings load, in the background
+  isolate too). `ArchiveApi` sends creator and post calls to the service's
+  provider even when it is off (saved posts still open), mixes recent
+  posts, creators and hash lookups from the enabled ones, and asks
+  `AppState.browse` for popular posts, tags and random picks;
+  `ProviderChips` switches that when both are on. A provider that is off
+  keeps its follows, which leave Following, For You and update checks
+  (`AppState.activeFollows`). Home and Popular reload when
+  `AppState.sourceKey` changes.
+- **Network.** Everything goes through `ArchiveApi`, and every image and
   video uses `NetImage`, `netImageProvider` or `mediaHeaders` so the Pawress
   user agent is sent. A plain `Image.network` without headers gets a 403 from
   the file host.
@@ -149,7 +170,7 @@ docs/IMPLEMENTATION1.md     Backlog of ideas not built yet, with where each woul
   image's thumbnail as a big picture (fetched with the Pawress user agent,
   1 s apart, text-only if it fails). It runs from the Notifications page
   (pull to refresh) and from WorkManager (`backgroundDispatcher`, interval in Settings, 15 min
-  minimum). The background isolate builds its own `Store` and `PawchiveApi`,
+  minimum). The background isolate builds its own `Store` and `ArchiveApi`,
   so keep `core/` free of UI dependencies. The app reloads follows and notices
   from the store on resume.
 - **For You.** The API has no recommendations; `ForYouFeed` builds them.
@@ -286,7 +307,8 @@ docs/IMPLEMENTATION1.md     Backlog of ideas not built yet, with where each woul
   `ANDROID_KEYSTORE_*` / `ANDROID_KEY_*` secrets via `android/key.properties`;
   without them builds fall back to the debug key and can't update installs.
   CI runs `dart format --set-exit-if-changed`, so format before pushing.
-- **Sign-in.** The website's login form runs in a WebView. The `session` cookie is
+- **Sign-in.** Pawchive only; Coomer follows and favorites stay on the
+  device (`AppState._syncs`). The website's login form runs in a WebView. The `session` cookie is
   read with `WebViewCookieManager`, checked against `/account/favorites`, and
   stored in secure storage.
 - **Theme.** `setPalette()` changes the global colors (`canvas`, `panel`,
@@ -332,6 +354,9 @@ scheduled.
 ## Not done yet / ideas
 
 - iOS and other platforms (only `android/` exists).
+- Coomer sign-in and account sync (`POST /authentication/login`, see
+  docs/coomer-api.md), and a device check that its file nodes accept the
+  Pawress user agent.
 - See [docs/IMPLEMENTATION1.md](docs/IMPLEMENTATION1.md) for the backlog
   (revisions, flagging, discreet mode, grouped notifications, download all,
   accessibility, automatic backups, ...).

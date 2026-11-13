@@ -64,7 +64,7 @@ void main() {
 
   test('taggedPosts reads the tag page and pages with o', () async {
     final requested = <Uri>[];
-    final api = PawchiveApi(
+    final api = ArchiveApi(
       client: MockClient((request) async {
         requested.add(request.url);
         return http.Response(_taggedPage, 200);
@@ -98,7 +98,7 @@ void main() {
   test(
     'randomPost and randomCreator read the redirect without following',
     () async {
-      final api = PawchiveApi(
+      final api = ArchiveApi(
         client: MockClient((request) async {
           expect(request.followRedirects, isFalse);
           final location = request.url.path == '/posts/random'
@@ -115,7 +115,7 @@ void main() {
   );
 
   test('random without a location is an error', () async {
-    final api = PawchiveApi(
+    final api = ArchiveApi(
       client: MockClient((_) async => http.Response('', 200)),
     );
     expect(api.randomPost(), throwsA(isA<ApiException>()));
@@ -124,7 +124,7 @@ void main() {
   test('searchHash reads posts and Discord matches, and 404 as none', () async {
     const hash =
         '925a6e2842e2cc617e4dde55ebd35b8acba95b2613acf0a541ccbc68ae58b594';
-    final api = PawchiveApi(
+    final api = ArchiveApi(
       client: MockClient((request) async {
         if (!request.url.path.endsWith(hash)) return http.Response('{}', 404);
         return http.Response(

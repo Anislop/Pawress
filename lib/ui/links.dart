@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/config.dart';
 import '../core/models.dart';
 import 'app_scope.dart';
 import 'creator_page.dart';
@@ -7,14 +8,14 @@ import 'post_page.dart';
 import 'tag_page.dart';
 import 'widgets.dart';
 
-/// Opens a pawchive.pw link (or shared text holding one) in the app: a post,
+/// Opens a provider's link (or shared text holding one) in the app: a post,
 /// an artist, or posts with a tag. Anything else is offered to the browser.
 void openPawchiveLink(BuildContext context, String text) {
   final messenger = ScaffoldMessenger.of(context);
   final url = PawchiveLink.findUrl(text);
   if (url == null) {
     messenger.showSnackBar(
-      const SnackBar(content: Text('That is not a Pawchive link.')),
+      const SnackBar(content: Text('Pawress cannot open that link.')),
     );
     return;
   }
@@ -40,7 +41,7 @@ void openPawchiveLink(BuildContext context, String text) {
   }
   final tag = url.queryParameters['tag'];
   if (url.path == '/posts' && tag != null && tag.isNotEmpty) {
-    return push(TagPostsPage(tag: tag));
+    return push(TagPostsPage(tag: tag, provider: Provider.atHost(url.host)));
   }
   messenger.showSnackBar(
     SnackBar(

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../core/config.dart';
 import '../core/feeds.dart';
 import '../core/models.dart';
 import 'app_scope.dart';
@@ -84,7 +85,7 @@ class _SearchPageState extends State<SearchPage>
             autofocus: true,
             textInputAction: TextInputAction.search,
             decoration: InputDecoration(
-              hintText: 'Search Pawchive',
+              hintText: 'Search',
               prefixIcon: const Icon(Icons.search_rounded),
               suffixIcon: _field.text.isEmpty
                   ? null
@@ -236,9 +237,20 @@ class _TagResults extends StatefulWidget {
 class _TagResultsState extends State<_TagResults>
     with AutomaticKeepAliveClientMixin {
   late Future<List<CreatorTag>> _tags = AppScope.read(context).popularTags();
+  late Provider _site = AppScope.read(context).browse;
 
   @override
   bool get wantKeepAlive => true;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final state = AppScope.of(context);
+    if (state.browse != _site) {
+      _site = state.browse;
+      _tags = state.popularTags();
+    }
+  }
 
   String get _tag {
     final query = widget.query.trim();
@@ -273,6 +285,7 @@ class _TagResultsState extends State<_TagResults>
             ? _match(snapshot.data!)
             : const <CreatorTag>[];
         final header = <Widget>[
+          const ProviderChips(),
           if (tag.isNotEmpty)
             ListTile(
               contentPadding: const EdgeInsets.fromLTRB(16, 6, 16, 6),

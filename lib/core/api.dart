@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -18,12 +19,15 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
-/// Pawchive's v1 API (https://pawchive.pw/api/schema). Creator post lists are
-/// paged [pageSize] at a time with the `o` offset.
-class PawchiveApi {
-  PawchiveApi({http.Client? client, this.session})
+/// One provider's v1 API, as Pawchive serves it
+/// (https://pawchive.pw/api/schema); [CoomerApi] overrides what Coomer does
+/// differently. Creator post lists are paged [pageSize] at a time with the
+/// `o` offset.
+class SiteApi {
+  SiteApi(this.provider, {http.Client? client, this.session})
     : _client = client ?? http.Client();
 
+  final Provider provider;
   final http.Client _client;
 
   /// The `session` cookie from signing in, sent with every request.
@@ -34,17 +38,17 @@ class PawchiveApi {
 
   Map<String, String> get _headers => {
     'User-Agent': userAgent,
-    'Accept': 'application/json',
+    'Accept': provider.accept,
     if (session != null) 'Cookie': '$sessionCookie=$session',
   };
 
-  Uri _uri(String path, [Map<String, String?>? query, String base = apiBase]) {
+  Uri _uri(String path, [Map<String, String?>? query, String? base]) {
     final params = {
       for (final entry in (query ?? const <String, String?>{}).entries)
         if (entry.value != null && entry.value!.isNotEmpty)
           entry.key: entry.value!,
     };
-    return Uri.parse('$base$path')
+    return Uri.parse('${base ?? provider.apiBase}$path')
         .replace(queryParameters: params.isEmpty ? null : params);
   }
 
@@ -63,24 +67,26 @@ class PawchiveApi {
         await _client.send(request).timeout(const Duration(seconds: 30)),
       );
     } catch (_) {
-      throw ApiException('Could not reach Pawchive. Check your connection.');
+      throw ApiException(
+        'Could not reach ${provider.name}. Check your connection.',
+      );
     }
     if (response.statusCode == 401) {
       onUnauthorized?.call();
-      throw const ApiException(
-        'Your Pawchive session expired. Sign in again.',
+      throw ApiException(
+        'Your ${provider.name} session expired. Sign in again.',
         status: 401,
       );
     }
     if (response.statusCode == 429) {
-      throw const ApiException(
-        'Pawchive is rate limiting requests. Try again shortly.',
+      throw ApiException(
+        '${provider.name} is rate limiting requests. Try again shortly.',
         status: 429,
       );
     }
     if (response.statusCode >= 400) {
       throw ApiException(
-        'Pawchive returned an error (${response.statusCode}).',
+        '${provider.name} returned an error (${response.statusCode}).',
         status: response.statusCode,
       );
     }
@@ -233,7 +239,7 @@ class PawchiveApi {
         }),
       ).posts;
 
-  /// The posts holding the file with this SHA-256, or null when Pawchive
+  /// The posts holding the file with this SHA-256, or null when the archive
   /// has no such file (a 404).
   Future<HashLookup?> searchHash(String sha256) async {
     try {
@@ -261,13 +267,13 @@ class PawchiveApi {
   Future<PawchiveLink> _random(String path) async {
     final response = await _send(
       'GET',
-      _uri(path, null, siteUrl),
+      _uri(path, null, provider.siteUrl),
       headers: {..._headers, 'Accept': 'text/html'},
       followRedirects: false,
     );
     final link = PawchiveLink.tryParse(response.headers['location'] ?? '');
     if (link == null) {
-      throw const ApiException('Pawchive did not pick anything. Try again.');
+      throw ApiException('${provider.name} did not pick anything. Try again.');
     }
     return link;
   }
@@ -279,7 +285,7 @@ class PawchiveApi {
   Future<String> _html(String path, [Map<String, String?>? query]) async {
     final response = await _send(
       'GET',
-      _uri(path, query, siteUrl),
+      _uri(path, query, provider.siteUrl),
       headers: {..._headers, 'Accept': 'text/html'},
     );
     return utf8.decode(response.bodyBytes);
@@ -315,6 +321,344 @@ class PawchiveApi {
   Future<void> removeFavoritePost(Post post) => _send(
     'DELETE',
     _uri('/favorites/post/${post.service}/${post.user}/${post.id}'),
+  );
+}
+
+/// Coomer's API. Its website is a single-page app, so what [SiteApi] scrapes
+/// from Pawchive's pages is JSON here; see docs/coomer-api.md.
+class CoomerApi extends SiteApi {
+  CoomerApi({super.client}) : super(Provider.coomer);
+
+  /// Site-wide lists are wrapped as `{count, true_count, posts}`.
+  List<Post> _posts(Object? json) =>
+      _maps(json is Map<String, dynamic> ? json['posts'] : json)
+          .map(Post.fromJson)
+          .toList();
+
+  @override
+  Future<List<Post>> recentPosts({int offset = 0, String? query}) async =>
+      _posts(
+        await _get('/posts', {'o': offset == 0 ? null : '$offset', 'q': query}),
+      );
+
+  @override
+  Future<List<Post>> creatorPosts(
+    String service,
+    String id, {
+    int offset = 0,
+    String? query,
+    String? tag,
+  }) async => _posts(
+    await _get('/$service/user/$id/posts', {
+      'o': offset == 0 ? null : '$offset',
+      'q': query,
+      'tag': tag,
+    }),
+  );
+
+  @override
+  Future<List<CreatorTag>> tags(String service, String id) async =>
+      mergeTags(await super.tags(service, id));
+
+  @override
+  Future<List<DirectMessage>> directMessages(String service, String id) async =>
+      [
+        for (final json in _maps(await _get('/$service/user/$id/dms')))
+          DirectMessage(
+            content: '${json['content'] ?? ''}',
+            added: (json['published'] ?? json['added'])?.toString(),
+          ),
+      ];
+
+  @override
+  Future<PopularPage> popularPosts({
+    PopularPeriod? period,
+    String? date,
+    int offset = 0,
+  }) async => parsePopularJson(
+    await _get('/posts/popular', {
+      'date': date,
+      'period': date == null ? null : period?.name,
+      'o': offset == 0 ? null : '$offset',
+    }),
+  );
+
+  /// Coomer archives no communities.
+  @override
+  Future<CommunityPage> community(
+    String service,
+    String id, {
+    String? channel,
+    int offset = 0,
+  }) async => const CommunityPage();
+
+  @override
+  Future<List<CreatorTag>> popularTags() async => mergeTags(
+    _maps(await _get('/posts/tags')).map(CreatorTag.fromJson).toList(),
+  );
+
+  @override
+  Future<List<Post>> taggedPosts(String tag, {int offset = 0}) async => _posts(
+    await _get('/posts', {'tag': tag, 'o': offset == 0 ? null : '$offset'}),
+  );
+
+  /// An unknown hash is a 200 with no posts here, not a 404.
+  @override
+  Future<HashLookup?> searchHash(String sha256) async {
+    final lookup = await super.searchHash(sha256);
+    return lookup == null || lookup.posts.isEmpty ? null : lookup;
+  }
+
+  @override
+  Future<PawchiveLink> _random(String path) async {
+    final json = await _get(path);
+    final service = json is Map ? '${json['service'] ?? ''}' : '';
+    final user = json is Map ? '${json['artist_id'] ?? ''}' : '';
+    if (service.isEmpty || user.isEmpty) {
+      throw ApiException('${provider.name} did not pick anything. Try again.');
+    }
+    return PawchiveLink(
+      service: service,
+      user: user,
+      post: (json as Map)['post_id']?.toString(),
+    );
+  }
+
+  @override
+  Future<List<Creator>> recommendedCreators(String service, String id) async =>
+      _maps(await _get('/$service/user/$id/recommended'))
+          .map(Creator.fromJson)
+          .toList();
+}
+
+/// Every enabled provider behind one API. Calls about a creator or post go
+/// to the provider carrying their service, whether or not it is enabled, so
+/// saved posts still open. Site-wide lists that can be mixed (recent posts,
+/// creators, hash lookup) ask every enabled provider; the ones ranked per
+/// site (popular, tags, random) ask [browse].
+class ArchiveApi {
+  ArchiveApi({http.Client? client, String? session})
+    : _sites = {
+        Provider.pawchive: SiteApi(
+          Provider.pawchive,
+          client: client,
+          session: session,
+        ),
+        Provider.coomer: CoomerApi(client: client),
+      };
+
+  final Map<Provider, SiteApi> _sites;
+  Provider? _browse;
+
+  /// The providers the sidebar has switched on, never empty.
+  Set<Provider> enabled = {Provider.pawchive};
+
+  bool isEnabled(Provider provider) => enabled.contains(provider);
+
+  /// The enabled provider whose popular posts, tags and random picks are
+  /// shown.
+  Provider get browse => isEnabled(_browse ?? Provider.pawchive)
+      ? _browse ?? Provider.pawchive
+      : Provider.all.firstWhere(isEnabled, orElse: () => Provider.pawchive);
+
+  set browse(Provider value) => _browse = value;
+
+  SiteApi on(Provider provider) => _sites[provider]!;
+  SiteApi _of(String service) => on(Provider.of(service));
+
+  /// Only Pawchive has accounts in Pawress so far.
+  String? get session => on(Provider.pawchive).session;
+  set session(String? value) => on(Provider.pawchive).session = value;
+
+  set onUnauthorized(VoidCallback? value) =>
+      on(Provider.pawchive).onUnauthorized = value;
+
+  /// [call] on every enabled provider. One that fails is left out unless
+  /// they all do, so a provider that is down doesn't empty the others.
+  Future<List<T>> _each<T>(Future<T> Function(SiteApi api) call) async {
+    final results = <T>[];
+    Object? failure;
+    await Future.wait([
+      for (final provider in Provider.all)
+        if (isEnabled(provider))
+          call(on(provider)).then<void>(
+            results.add,
+            onError: (Object e) {
+              failure ??= e;
+            },
+          ),
+    ]);
+    if (results.isEmpty && failure != null) throw failure!;
+    return results;
+  }
+
+  /// Recent posts from every enabled provider, taken in turns.
+  Future<List<Post>> recentPosts({int offset = 0, String? query}) async =>
+      interleave(
+        await _each((api) => api.recentPosts(offset: offset, query: query)),
+      );
+
+  Future<Creator> creator(String service, String id) =>
+      _of(service).creator(service, id);
+
+  Future<List<Post>> creatorPosts(
+    String service,
+    String id, {
+    int offset = 0,
+    String? query,
+    String? tag,
+  }) =>
+      _of(service)
+          .creatorPosts(service, id, offset: offset, query: query, tag: tag);
+
+  Future<Post> post(String service, String creatorId, String postId) =>
+      _of(service).post(service, creatorId, postId);
+
+  Future<List<Announcement>> announcements(String service, String id) =>
+      _of(service).announcements(service, id);
+
+  Future<List<CreatorTag>> tags(String service, String id) =>
+      _of(service).tags(service, id);
+
+  Future<List<Creator>> links(String service, String id) =>
+      _of(service).links(service, id);
+
+  Future<List<Fancard>> fancards(String service, String id) =>
+      _of(service).fancards(service, id);
+
+  Future<List<Comment>> comments(
+    String service,
+    String creatorId,
+    String postId,
+  ) => _of(service).comments(service, creatorId, postId);
+
+  /// Every enabled provider's creators.
+  Future<List<Creator>> allCreators() async => [
+    for (final creators in await _each((api) => api.allCreators())) ...creators,
+  ];
+
+  Future<List<DirectMessage>> directMessages(String service, String id) =>
+      _of(service).directMessages(service, id);
+
+  Future<PopularPage> popularPosts({
+    PopularPeriod? period,
+    String? date,
+    int offset = 0,
+  }) => on(browse).popularPosts(period: period, date: date, offset: offset);
+
+  Future<CommunityPage> community(
+    String service,
+    String id, {
+    String? channel,
+    int offset = 0,
+  }) => _of(service).community(service, id, channel: channel, offset: offset);
+
+  Future<List<CreatorTag>> popularTags([Provider? provider]) =>
+      on(provider ?? browse).popularTags();
+
+  Future<List<Post>> taggedPosts(
+    String tag, {
+    int offset = 0,
+    Provider? provider,
+  }) => on(provider ?? browse).taggedPosts(tag, offset: offset);
+
+  /// The posts holding the file on any enabled provider, or null when none
+  /// has it.
+  Future<HashLookup?> searchHash(String sha256) async {
+    final found = [...(await _each((api) => api.searchHash(sha256))).nonNulls];
+    if (found.isEmpty) return null;
+    return HashLookup(
+      hash: found.first.hash,
+      posts: [for (final lookup in found) ...lookup.posts],
+      discordCount: found.fold(0, (sum, lookup) => sum + lookup.discordCount),
+      mime: found.map((lookup) => lookup.mime).nonNulls.firstOrNull,
+      size: found.map((lookup) => lookup.size).nonNulls.firstOrNull,
+    );
+  }
+
+  Future<PawchiveLink> randomPost() => on(browse).randomPost();
+  Future<Creator> randomCreator() => on(browse).randomCreator();
+
+  Future<List<Creator>> recommendedCreators(String service, String id) =>
+      _of(service).recommendedCreators(service, id);
+
+  // Account (Pawchive only; requires [session]).
+
+  Future<List<Creator>> favoriteCreators() =>
+      on(Provider.pawchive).favoriteCreators();
+
+  Future<void> addFavoriteCreator(String service, String id) =>
+      on(Provider.pawchive).addFavoriteCreator(service, id);
+
+  Future<void> removeFavoriteCreator(String service, String id) =>
+      on(Provider.pawchive).removeFavoriteCreator(service, id);
+
+  Future<List<Post>> favoritePosts() => on(Provider.pawchive).favoritePosts();
+
+  Future<void> addFavoritePost(Post post) =>
+      on(Provider.pawchive).addFavoritePost(post);
+
+  Future<void> removeFavoritePost(Post post) =>
+      on(Provider.pawchive).removeFavoritePost(post);
+}
+
+/// [lists] taken in turns, one item from each until all run out.
+List<T> interleave<T>(List<List<T>> lists) {
+  if (lists.length == 1) return lists.first;
+  final longest = lists.fold(0, (most, list) => max(most, list.length));
+  return [
+    for (var i = 0; i < longest; i++)
+      for (final list in lists)
+        if (i < list.length) list[i],
+  ];
+}
+
+/// Tags by their [cleanTag] name, most used first. Coomer lists a tag once
+/// per markup variant ("ads", "ads</p>"); the most used variant is kept,
+/// since searching by the clean name only finds that one.
+@visibleForTesting
+List<CreatorTag> mergeTags(List<CreatorTag> tags) {
+  final best = <String, CreatorTag>{};
+  for (final tag in tags) {
+    final name = cleanTag(tag.tag);
+    if (name.isEmpty) continue;
+    final key = name.toLowerCase();
+    if ((best[key]?.postCount ?? -1) < tag.postCount) {
+      best[key] = CreatorTag(name, tag.postCount);
+    }
+  }
+  return best.values.toList()
+    ..sort((a, b) => b.postCount.compareTo(a.postCount));
+}
+
+/// Coomer's `/posts/popular`: the posts, the range in words and, per
+/// period, `[previous, next, current]` start dates. Its `next` runs into the
+/// future, so one after `props.today` is dropped like Pawchive's.
+@visibleForTesting
+PopularPage parsePopularJson(Object? json) {
+  final map = json is Map<String, dynamic> ? json : const <String, dynamic>{};
+  final info = map['info'] is Map ? map['info'] as Map : const {};
+  final props = map['props'] is Map ? map['props'] as Map : const {};
+  final dates = info['navigation_dates'];
+  final today = props['today']?.toString();
+  final ranges = <PopularPeriod, PopularRange>{};
+  for (final period in PopularPeriod.values) {
+    final range = dates is Map ? dates[period.name] : null;
+    if (range is! List || range.length < 3) continue;
+    final next = '${range[1]}';
+    ranges[period] = (
+      current: '${range[2]}',
+      previous: '${range[0]}',
+      next: today != null && next.compareTo(today) > 0 ? null : next,
+    );
+  }
+  return PopularPage(
+    [
+      for (final item in map['posts'] as List? ?? const [])
+        if (item is Map<String, dynamic>) Post.fromJson(item),
+    ],
+    ranges,
+    label: info['range_desc']?.toString(),
   );
 }
 
@@ -519,7 +863,8 @@ final _messageEmbed = RegExp(
 );
 final _messageRange = RegExp(r'Showing\s+\d+\s*-\s*(\d+)\s+of\s+(\d+)');
 
-String _absolute(String url) => url.startsWith('/') ? '$siteUrl$url' : url;
+String _absolute(String url) =>
+    url.startsWith('/') ? '${Provider.pawchive.siteUrl}$url' : url;
 
 /// The text of an element, without its tags.
 String _text(String html) =>

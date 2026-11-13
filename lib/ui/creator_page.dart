@@ -330,7 +330,7 @@ class _CreatorPageState extends State<CreatorPage>
                     ),
                     PopupMenuItem(
                       value: () => openExternal(c.pawchiveUrl),
-                      child: const Text('Open on Pawchive'),
+                      child: Text('Open on ${c.provider.name}'),
                     ),
                     PopupMenuItem(
                       value: () => copyLink(context, c.pawchiveUrl),

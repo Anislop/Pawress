@@ -62,7 +62,7 @@ void main() {
         InMemorySharedPreferencesAsync.empty();
     server = _FakePawchive();
     store = Store();
-    checker = UpdateChecker(PawchiveApi(client: server.client), store);
+    checker = UpdateChecker(ArchiveApi(client: server.client), store);
     await store.saveFollows([
       Follow(
         creator: const Creator(id: '7', service: 'patreon', name: 'Artist'),

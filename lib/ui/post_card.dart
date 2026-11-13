@@ -541,7 +541,7 @@ Future<void> showPostMenu(BuildContext context, Post post) {
               }),
             item(
               Icons.open_in_new_rounded,
-              'Open on Pawchive',
+              'Open on ${post.provider.name}',
               () => openExternal(post.url),
             ),
           ],

@@ -10,7 +10,7 @@ import 'models.dart';
 class CreatorDirectory {
   CreatorDirectory(this._api);
 
-  final PawchiveApi _api;
+  final ArchiveApi _api;
   final _known = <String, Creator>{};
   final _pending = <String, Completer<Creator?>>{};
   final _queue = Queue<(String service, String id)>();

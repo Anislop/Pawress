@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'config.dart';
 import 'models.dart';
 
 enum ThemeChoice {
@@ -64,6 +65,8 @@ class AppSettings {
     this.randomKind,
     this.dataSaver = DataSaver.off,
     this.keepHistory = true,
+    this.providers = const {'pawchive'},
+    this.mirrors = const {},
   });
 
   final ThemeChoice theme;
@@ -108,6 +111,26 @@ class AppSettings {
   /// Record opened posts and artists in History.
   final bool keepHistory;
 
+  /// The ids of the providers switched on in the sidebar, never empty.
+  final Set<String> providers;
+
+  /// Mirror hosts by provider id, for the ones not on their default host.
+  final Map<String, String> mirrors;
+
+  Set<Provider> get enabledProviders => {
+    for (final provider in Provider.all)
+      if (providers.contains(provider.id)) provider,
+  };
+
+  /// Points every provider at its mirror, or back at its default host.
+  /// Models build their URLs from [Provider.host], so this runs whenever
+  /// settings are loaded or changed, in the background isolate too.
+  void applyMirrors() {
+    for (final provider in Provider.all) {
+      provider.host = mirrors[provider.id] ?? provider.defaultHost;
+    }
+  }
+
   static const intervals = [15, 30, 60, 180, 360, 720];
 
   AppSettings copyWith({
@@ -126,6 +149,8 @@ class AppSettings {
     RandomKind? randomKind,
     DataSaver? dataSaver,
     bool? keepHistory,
+    Set<String>? providers,
+    Map<String, String>? mirrors,
   }) => AppSettings(
     theme: theme ?? this.theme,
     notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
@@ -146,6 +171,8 @@ class AppSettings {
     randomKind: randomKind ?? this.randomKind,
     dataSaver: dataSaver ?? this.dataSaver,
     keepHistory: keepHistory ?? this.keepHistory,
+    providers: providers ?? this.providers,
+    mirrors: mirrors ?? this.mirrors,
   );
 
   factory AppSettings.fromJson(Map<String, dynamic> json) => AppSettings(
@@ -167,7 +194,23 @@ class AppSettings {
     randomKind: RandomKind.values.asNameMap()[json['randomKind']],
     dataSaver: DataSaver.values.asNameMap()[json['dataSaver']] ?? DataSaver.off,
     keepHistory: json['keepHistory'] as bool? ?? true,
+    providers: _providers(json['providers']),
+    mirrors: {
+      if (json['mirrors'] case final Map mirrors)
+        for (final entry in mirrors.entries)
+          if (Provider.byId('${entry.key}') != null)
+            '${entry.key}': ?Provider.parseHost('${entry.value}'),
+    },
   );
+
+  static Set<String> _providers(Object? json) {
+    final ids = {
+      if (json is List)
+        for (final id in json)
+          if (Provider.byId('$id') != null) '$id',
+    };
+    return ids.isEmpty ? const {'pawchive'} : ids;
+  }
 
   Map<String, dynamic> toJson() => {
     'theme': theme.name,
@@ -185,6 +228,8 @@ class AppSettings {
     'randomKind': randomKind?.name,
     'dataSaver': dataSaver.name,
     'keepHistory': keepHistory,
+    'providers': providers.toList(),
+    'mirrors': mirrors,
   };
 }
 
@@ -226,9 +271,10 @@ class Store {
 
   Future<AppSettings> settings() async {
     final raw = await _prefs.getString(_settings);
-    return raw == null
-        ? const AppSettings()
-        : AppSettings.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    return (raw == null
+          ? const AppSettings()
+          : AppSettings.fromJson(jsonDecode(raw) as Map<String, dynamic>))
+      ..applyMirrors();
   }
 
   Future<void> saveSettings(AppSettings settings) =>

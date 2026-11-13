@@ -146,7 +146,7 @@ void main() {
       });
       state = AppState(
         store: Store(),
-        api: PawchiveApi(client: client),
+        api: ArchiveApi(client: client),
       );
       await state.init();
     });

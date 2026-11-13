@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/config.dart';
 import '../core/api.dart';
 import '../core/feeds.dart';
 import '../core/models.dart';
@@ -24,7 +25,7 @@ enum _ArtistSort {
   final String label;
 }
 
-/// Popular artists (Pawchive's `/artists`, ranked by favorites) and popular
+/// Popular artists (the sites' `/creators`, ranked by favorites) and popular
 /// posts (`/posts/popular`). The home screen owns the bottom bar that picks
 /// the [section]; this state keeps both alive while switching.
 class PopularTab extends StatefulWidget {
@@ -49,8 +50,33 @@ class _PopularTabState extends State<PopularTab>
   List<Creator>? _sortedFrom;
   List<(String, int)> _services = const [];
 
+  String? _sources;
+  Provider? _site;
+
   @override
   bool get wantKeepAlive => true;
+
+  /// Switching site (the chips) or the enabled providers and mirrors (the
+  /// sidebar) starts both lists again.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final state = AppScope.of(context);
+    final sources = state.sourceKey;
+    final site = state.browse;
+    if (_sources != null && sources != _sources) {
+      _creators = null;
+      _service = null;
+      _sorted = null;
+    }
+    if (_site != null && (site != _site || sources != _sources)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _posts.showRange(null);
+      });
+    }
+    _sources = sources;
+    _site = site;
+  }
 
   @override
   void dispose() {
@@ -122,6 +148,7 @@ class _PopularTabState extends State<PopularTab>
   Widget _periods() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
+      const ProviderChips(),
       SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
@@ -223,8 +250,8 @@ class _PopularTabState extends State<PopularTab>
               icon: Icons.downloading_rounded,
               title: 'Loading artists',
               body:
-                  "Pawchive's artist list is large; this takes a moment "
-                  'the first time.',
+                  'The artist list is large; this takes a moment the first '
+                  'time.',
             ),
           );
         } else {

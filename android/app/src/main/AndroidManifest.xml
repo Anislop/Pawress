@@ -33,7 +33,7 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- pawchive.pw links. Unverified, so Android opens them here only
+            <!-- pawchive.pw and coomer.st links. Unverified, so Android opens them here only
                  once "Open supported links" is allowed in the app's settings. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
@@ -42,6 +42,8 @@
                 <data android:scheme="https"/>
                 <data android:host="pawchive.pw"/>
                 <data android:host="www.pawchive.pw"/>
+                <data android:host="coomer.st"/>
+                <data android:host="www.coomer.st"/>
             </intent-filter>
             <!-- Links shared from a browser or chat app. -->
             <intent-filter>
