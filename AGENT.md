@@ -3,7 +3,8 @@
 Android client for [Pawchive](https://pawchive.pw), a Kemono-style archive
 of Patreon, Pixiv Fanbox, Discord and other creator posts. It's built with Flutter,
 is Android only (there's no `ios/` or other platform folder), and is laid out like
-X on Android. The only bottom bar is the Popular tab's Artists / Posts switch. Its structure and intro follow
+X on Android: a bottom bar of icons (Home, Popular, Search, Notifications)
+that hides while scrolling down, with For You / Following as Home's tabs. Its structure and intro follow
 [BooruPlus](https://github.com/Anislop/BooruPlus).
 
 It can also read [Coomer](https://coomer.st) (OnlyFans, Fansly, CandFans) as a
@@ -56,7 +57,7 @@ lib/
     widgets.dart       NetImage, CreatorAvatar, ServiceBadge, HtmlContent, FeedView (hides blocked posts, "caught up" line), StatusView, BackToTop, ProviderChips, scroll / copy / time / size helpers
     splash.dart        BooruPlus-style splash + revealFromBottom transition
     onboarding.dart    Four parallax slides (art lags, text leads), notification permission, optional sign-in
-    home.dart          HomeScreen (floating SliverAppBar + For You / Following / Popular tabs, Popular's bottom bar), Sidebar (drawer, provider switches) and showMirrorDialog
+    home.dart          HomeScreen (hiding bottom bar: Home with For You / Following tabs, Popular with Artists / Posts tabs, Search, Notifications), Sidebar (drawer, provider switches) and showMirrorDialog
     popular.dart       PopularTab: popular artists (from /creators, sorted on device) and PopularFeed posts
     post_card.dart     X-style post row, PostActions (comments / thumbs up / favorite), MediaGrid, showPostMenu, block / not interested helpers, openPost/openCreator/openViewer
     notify_bell.dart   NotifyBell (X-style bell beside Following) and showNotifySheet
@@ -66,7 +67,7 @@ lib/
     downloads.dart     downloadFiles() (folder choice + enqueue), pickDownloadFolder(), DownloadsPage
     update_dialog.dart showUpdateDialog: changelog, progress, install errors
     post_page.dart     Full post: text, poll, actions, media, attachments, tags, newer / older post, comments
-    media_viewer.dart  Full-screen viewer: every image and video in one vertical scroll, zoomable images, Chewie video, share / Set as, data saver
+    media_viewer.dart  Full-screen viewer: gesture mode (pages sideways, swipe down closes) or Paginated mode (one vertical scroll), zoomable images, video with its controls under it, share / Set as, data saver
     share.dart         shareImage / setImageAs (from the image cache), imageCacheBytes, clearImageCache
     links.dart         openPawchiveLink: a shared or opened pawchive.pw link to a post, artist or tag page
     creator_page.dart  Artist profile (banner, site, links, Follow, Similar artists sheet, search, block) + tabs; FollowButton, ArtistTile
@@ -225,16 +226,24 @@ docs/IMPLEMENTATION1.md     Backlog of ideas not built yet, with where each woul
 - **Sidebar gesture.** `HomeScreen._onOverscroll` opens the drawer when the
   For You tab is dragged past its left edge; the drawer closes with its own
   drag.
+- **Bottom bar.** `HomeScreen` keeps Home, Popular, Search
+  (`SearchPage`) and Notifications (`NotificationsPage`) in an
+  `IndexedStack`, each built the first time it's opened (Search loads the
+  artist list). Any vertical `UserScrollNotification` going down hides the
+  bar (`AnimatedAlign` height factor), going up shows it. Popular's
+  Artists / Posts are tabs in its own app bar. Search and Notifications
+  are no longer in the sidebar.
 - **Back to top.** Tapping the open tab or the logo on Home, the open
-  Popular section in the bottom bar, or the open tab or collapsed name on a
+  Popular tab or the Home / Popular icon in the bottom bar, or the open tab or collapsed name on a
   profile calls `scrollNestedToTop`. NestedScrollView moves all its inner
   lists together, so every tab goes up. `BackToTop` (around `FeedView`,
   popular artists, the media grid, tags and hash results) shows a pink
   arrow at the bottom center once a list is two screens down; it uses
   `scrollNestedToTop` inside a NestedScrollView and `scrollToTop`
   otherwise. Both jump to 1.5 screens first so the animation doesn't build
-  (and load thumbnails for) every row. Back on Following or Popular
-  returns to For You (`PopScope` on HomeScreen) instead of leaving.
+  (and load thumbnails for) every row. Back on another destination returns
+  to Home, and on Following to For You (`PopScope` on HomeScreen), instead
+  of leaving.
 - **Media tab.** `CreatorMediaTab` pages the artist's posts with its own
   `OffsetFeed`, created only when the tab opens, and shows `post.media` as
   a 3-column grid filtered All / Photos / GIFs / Videos. When a filter
@@ -256,7 +265,14 @@ docs/IMPLEMENTATION1.md     Backlog of ideas not built yet, with where each woul
 - **Quick actions.** Holding a post in a feed opens `showPostMenu` (artist,
   like, favorite, download, copy link / text, open). Post text and comments
   are in a `SelectionArea`; posts and profiles have Copy link (`copyLink`).
-- **Media viewer.** One `CustomScrollView` centered on the tapped item, so
+- **Media viewer.** `AppSettings.gestureViewer` (on by default) picks the
+  gesture viewer, as in X: a `PageView` with one item fitted to the screen
+  per page, swiped sideways (held still while an image is zoomed); a
+  vertical drag moves the item and fades the black behind it, and past
+  120 px or a fling closes the viewer over the post (the route isn't
+  opaque), otherwise it slides back. Only the current page loads its full
+  file. Off, it's Paginated mode: one `CustomScrollView` centered on the
+  tapped item, so
   earlier items grow upward without moving it. Each item reports its
   visibility; the one filling most of the screen is "current" (top bar count,
   download, the video that may play). Images show the thumbnail at once and
@@ -266,8 +282,13 @@ docs/IMPLEMENTATION1.md     Backlog of ideas not built yet, with where each woul
   so the hold visibly registers) and then shows a Download pill under it (inside its
   bottom edge when there's no room on screen); sliding onto it and lifting
   downloads that file, and it stays tappable for 4 s after lifting
-  elsewhere. Videos have Download and Open in browser in Chewie's ⋮ menu
-  (`additionalOptions`).
+  elsewhere (both modes).
+- **Video player.** `_VideoItem` is a plain `VideoPlayer` on black with
+  `_VideoBar` (play, time, scrubbable progress, mute, ⋮ with Download and
+  Open in browser) laid out under the picture, so controls never cover or
+  dim it. A tap fades the bar in or out (it hides 3 s into playback); a
+  double tap on the left or right half skips 10 s back or forward and
+  shows the total skipped on that side.
 - **Autoplay.** Each GIF or video tile reports its visibility (visibility_detector)
   to `FeedAutoplay.instance`, which picks one tile at 60%+ visibility. The tile
   waits 400 ms, then loads the full file (fetching the post first for

@@ -218,6 +218,17 @@ class SettingsPage extends StatelessWidget {
             onChanged: (value) =>
                 update(settings.copyWith(autoplayVideos: value)),
           ),
+          SettingsSwitchCard(
+            icon: Icons.swipe_rounded,
+            title: 'Gesture viewer',
+            subtitle: settings.gestureViewer
+                ? 'Swipe sideways through a post\'s media and down to close.'
+                : 'Paginated mode: every image and video in one vertical '
+                      'scroll.',
+            value: settings.gestureViewer,
+            onChanged: (value) =>
+                update(settings.copyWith(gestureViewer: value)),
+          ),
           const SettingsSection('Data and storage'),
           SettingsChoiceCard<DataSaver>(
             icon: Icons.data_saver_on_rounded,
