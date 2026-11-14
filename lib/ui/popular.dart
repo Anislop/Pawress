@@ -11,7 +11,7 @@ import 'post_card.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
-/// The two halves of the Popular tab, switched by the home's bottom bar.
+/// The two halves of Popular, switched by its tabs.
 enum PopularSection { artists, posts }
 
 enum _ArtistSort {
@@ -26,8 +26,8 @@ enum _ArtistSort {
 }
 
 /// Popular artists (the sites' `/creators`, ranked by favorites) and popular
-/// posts (`/posts/popular`). The home screen owns the bottom bar that picks
-/// the [section]; this state keeps both alive while switching.
+/// posts (`/posts/popular`). The home screen owns the tabs that pick the
+/// [section]; this state keeps both alive while switching.
 class PopularTab extends StatefulWidget {
   const PopularTab({super.key, required this.section});
 

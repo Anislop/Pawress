@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:chewie/chewie.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -19,8 +18,11 @@ import 'share.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
-/// Full-screen viewer for a post's images and videos, one under another in
-/// a single vertical scroll. Images zoom with pinch and double-tap (the list
+/// Full-screen viewer for a post's images and videos. By default it's a
+/// gesture viewer as in X: one item per page, swiped sideways, and a swipe
+/// up or down closes it over the post. Paginated mode
+/// ([AppSettings.gestureViewer] off) puts them one under another in a
+/// single vertical scroll. Images zoom with pinch and double-tap (the list
 /// holds still while one is zoomed); a video plays while it's the item
 /// filling most of the screen. Holding an image shows a download button
 /// under it: slide onto it and lift to save that image. Videos have it in
@@ -41,7 +43,7 @@ class MediaViewer extends StatefulWidget {
 }
 
 class _MediaViewerState extends State<MediaViewer>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late List<MediaFile> _media = widget.post.media;
   late int _index = widget.initialIndex;
   final _centerKey = UniqueKey();
@@ -82,6 +84,22 @@ class _MediaViewerState extends State<MediaViewer>
     ),
   );
   int? _held;
+
+  /// Gesture mode: the pages, and how far the open item is dragged toward
+  /// closing.
+  late final bool _gesture = AppScope.read(context).settings.gestureViewer;
+  late final _pages = PageController(initialPage: widget.initialIndex);
+  double _drag = 0;
+  late final AnimationController _dragBack =
+      AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 200),
+      )..addListener(
+        () => setState(() => _drag = _dragFrom * (1 - _dragBack.value)),
+      );
+  double _dragFrom = 0;
+  static const _closeDistance = 120.0;
+  static const _closeVelocity = 700.0;
 
   @override
   void initState() {
@@ -155,6 +173,8 @@ class _MediaViewerState extends State<MediaViewer>
 
   @override
   void dispose() {
+    _pages.dispose();
+    _dragBack.dispose();
     _hold.dispose();
     _pressLinger?.cancel();
     _scroll?.dispose();
@@ -241,6 +261,32 @@ class _MediaViewerState extends State<MediaViewer>
     downloadFiles(context, widget.post, [_media[press.index]]);
   }
 
+  void _onDragUpdate(DragUpdateDetails details) {
+    _dragBack.stop();
+    _dismissPress();
+    setState(() => _drag += details.delta.dy);
+  }
+
+  /// Far or fast enough closes the viewer; otherwise the item slides back.
+  void _onDragEnd(DragEndDetails details) {
+    final velocity = details.velocity.pixelsPerSecond.dy;
+    if (_drag.abs() > _closeDistance ||
+        (velocity.abs() > _closeVelocity && velocity.sign == _drag.sign)) {
+      Navigator.of(context).pop();
+      return;
+    }
+    _dragFrom = _drag;
+    _dragBack.forward(from: 0);
+  }
+
+  void _onPage(int index) {
+    _dismissPress();
+    setState(() {
+      _index = index;
+      _zoomed = false;
+    });
+  }
+
   Widget _item(int index) {
     final item = _media[index];
     final Widget child;
@@ -258,6 +304,7 @@ class _MediaViewerState extends State<MediaViewer>
                   AppScope.read(context).settings.autoplayVideos &&
                   _saving == false,
               onDownload: () => downloadFiles(context, widget.post, [item]),
+              fill: _gesture,
             );
     } else {
       child = Builder(
@@ -279,9 +326,10 @@ class _MediaViewerState extends State<MediaViewer>
               key: ValueKey(item.path),
               file: item,
               gate: _gate,
+              fill: _gesture,
               loadFull:
                   !_resolving &&
-                  _visible.containsKey(index) &&
+                  (_gesture ? index == _index : _visible.containsKey(index)) &&
                   _fullAllowed(index),
               onAskFull: _saving != true || _fullAllowed(index)
                   ? null
@@ -294,10 +342,41 @@ class _MediaViewerState extends State<MediaViewer>
         ),
       );
     }
+    if (_gesture) return child;
     return VisibilityDetector(
       key: ValueKey('viewer/$index'),
       onVisibilityChanged: (info) => _onVisible(index, info),
       child: Padding(padding: const EdgeInsets.only(bottom: 4), child: child),
+    );
+  }
+
+  /// One item per page; a vertical drag moves it and fades the black
+  /// behind it, showing the post underneath, until it's let go.
+  Widget _pager() {
+    final fade = (1 - _drag.abs() / 400).clamp(0.0, 1.0);
+    final draggable = !_zoomed;
+    return GestureDetector(
+      onVerticalDragUpdate: draggable ? _onDragUpdate : null,
+      onVerticalDragEnd: draggable ? _onDragEnd : null,
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: fade),
+        child: Transform.translate(
+          offset: Offset(0, _drag),
+          child: PageView.builder(
+            controller: _pages,
+            physics: _zoomed ? const NeverScrollableScrollPhysics() : null,
+            itemCount: _media.length,
+            onPageChanged: _onPage,
+            itemBuilder: (context, index) => Padding(
+              padding: EdgeInsets.only(
+                top: MediaQuery.paddingOf(context).top,
+                bottom: MediaQuery.paddingOf(context).bottom,
+              ),
+              child: _item(index),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -310,48 +389,53 @@ class _MediaViewerState extends State<MediaViewer>
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
       child: Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: _gesture ? Colors.transparent : Colors.black,
         body: Stack(
           children: [
-            NotificationListener<ScrollUpdateNotification>(
-              onNotification: (_) {
-                _dismissPress();
-                return false;
-              },
-              child: CustomScrollView(
-                controller: _scroll,
-                center: _centerKey,
-                physics: _zoomed ? const NeverScrollableScrollPhysics() : null,
-                slivers: [
-                  SliverToBoxAdapter(child: SizedBox(height: _topInset)),
-                  // Above the center: the items before the tapped one, nearest
-                  // first.
-                  SliverList.builder(
-                    itemCount: start,
-                    itemBuilder: (context, i) => _item(start - 1 - i),
-                  ),
-                  SliverList.builder(
-                    key: _centerKey,
-                    itemCount: _media.length - start,
-                    itemBuilder: (context, i) => _item(start + i),
-                  ),
-                  SliverToBoxAdapter(
-                    child: SizedBox(
-                      height: MediaQuery.paddingOf(context).bottom + 24,
+            if (_gesture)
+              _pager()
+            else
+              NotificationListener<ScrollUpdateNotification>(
+                onNotification: (_) {
+                  _dismissPress();
+                  return false;
+                },
+                child: CustomScrollView(
+                  controller: _scroll,
+                  center: _centerKey,
+                  physics: _zoomed
+                      ? const NeverScrollableScrollPhysics()
+                      : null,
+                  slivers: [
+                    SliverToBoxAdapter(child: SizedBox(height: _topInset)),
+                    // Above the center: the items before the tapped one, nearest
+                    // first.
+                    SliverList.builder(
+                      itemCount: start,
+                      itemBuilder: (context, i) => _item(start - 1 - i),
                     ),
-                  ),
-                ],
+                    SliverList.builder(
+                      key: _centerKey,
+                      itemCount: _media.length - start,
+                      itemBuilder: (context, i) => _item(start + i),
+                    ),
+                    SliverToBoxAdapter(
+                      child: SizedBox(
+                        height: MediaQuery.paddingOf(context).bottom + 24,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
             Positioned(
               top: 0,
               left: 0,
               right: 0,
               child: AnimatedOpacity(
-                opacity: _chrome ? 1 : 0,
+                opacity: _chrome && _drag == 0 ? 1 : 0,
                 duration: const Duration(milliseconds: 180),
                 child: IgnorePointer(
-                  ignoring: !_chrome,
+                  ignoring: !_chrome || _drag != 0,
                   child: _TopBar(
                     title: _media.length > 1
                         ? '${_index + 1} / ${_media.length}'
@@ -606,8 +690,9 @@ class _Pending extends StatelessWidget {
   );
 }
 
-/// An image at the screen's width: the thumbnail at once, then the full
-/// file over it once [loadFull] allows and the gate gives it a turn.
+/// An image at the screen's width (or fitted into the screen with [fill]):
+/// the thumbnail at once, then the full file over it once [loadFull] allows
+/// and the gate gives it a turn.
 class _ImageItem extends StatefulWidget {
   const _ImageItem({
     super.key,
@@ -616,9 +701,11 @@ class _ImageItem extends StatefulWidget {
     required this.loadFull,
     required this.onZoom,
     this.onAskFull,
+    this.fill = false,
   });
 
   final MediaFile file;
+  final bool fill;
   final _FullFileGate gate;
   final bool loadFull;
   final ValueChanged<bool> onZoom;
@@ -720,10 +807,15 @@ class _ImageItemState extends State<_ImageItem>
     final file = widget.file;
     final thumb = file.thumbnailUrl;
     final full = _full;
-    Widget box(double ratio, [Widget? child]) => AspectRatio(
-      aspectRatio: ratio,
-      child: ColoredBox(color: Colors.white10, child: child),
-    );
+    final fill = widget.fill;
+    Widget box(double ratio, [Widget? child]) {
+      final shape = AspectRatio(
+        aspectRatio: ratio,
+        child: ColoredBox(color: Colors.white10, child: child),
+      );
+      return fill ? Center(child: shape) : shape;
+    }
+
     return GestureDetector(
       onDoubleTapDown: (details) => _doubleTap = details,
       onDoubleTap: _toggleZoom,
@@ -734,6 +826,7 @@ class _ImageItemState extends State<_ImageItem>
         minScale: 1,
         maxScale: 6,
         child: Stack(
+          fit: fill ? StackFit.expand : StackFit.loose,
           children: [
             // The thumbnail sets the height; the full file has the same
             // shape.
@@ -743,7 +836,7 @@ class _ImageItemState extends State<_ImageItem>
               Image(
                 image: netImageProvider(thumb),
                 width: double.infinity,
-                fit: BoxFit.fitWidth,
+                fit: fill ? BoxFit.contain : BoxFit.fitWidth,
                 frameBuilder: (context, child, frame, sync) =>
                     frame == null && !sync ? box(3 / 4) : child,
                 errorBuilder: (_, _, _) => box(
@@ -815,8 +908,11 @@ class _ImageItemState extends State<_ImageItem>
   }
 }
 
-/// A video with Chewie's controls at its own shape. It only loads and plays
-/// while [active].
+/// A video on black with its controls in a bar under it, so they never
+/// cover or dim the picture. Tapping shows or hides the bar (it fades out
+/// while playing); a double tap on either half skips back or forward
+/// [_skip]. It only loads and plays while [active]. With [fill] it's
+/// centered in the space it gets instead of taking its own height.
 class _VideoItem extends StatefulWidget {
   const _VideoItem({
     super.key,
@@ -824,21 +920,33 @@ class _VideoItem extends StatefulWidget {
     required this.active,
     required this.autoplay,
     required this.onDownload,
+    this.fill = false,
   });
 
   final String url;
   final bool active;
   final bool autoplay;
   final VoidCallback onDownload;
+  final bool fill;
 
   @override
   State<_VideoItem> createState() => _VideoItemState();
 }
 
 class _VideoItemState extends State<_VideoItem> {
+  static const _skip = Duration(seconds: 10);
+  static const _controlsTimeout = Duration(seconds: 3);
+
   VideoPlayerController? _video;
-  ChewieController? _chewie;
   String? _error;
+  bool _controls = true;
+  Timer? _hideControls;
+  Offset? _doubleTap;
+
+  /// The side a double tap skipped to, shown briefly over that half.
+  bool? _skipped;
+  int _skips = 0;
+  Timer? _skipShown;
 
   @override
   void initState() {
@@ -866,69 +974,293 @@ class _VideoItemState extends State<_VideoItem> {
       return;
     }
     if (!mounted) return;
-    setState(() {
-      _chewie = ChewieController(
-        videoPlayerController: video,
-        autoPlay: widget.autoplay && widget.active,
-        looping: video.value.duration < const Duration(seconds: 30),
-        allowFullScreen: false,
-        additionalOptions: (_) => [
-          OptionItem(
-            onTap: (sheet) {
-              Navigator.of(sheet).pop();
-              widget.onDownload();
-            },
-            iconData: Icons.download_rounded,
-            title: 'Download',
-          ),
-          OptionItem(
-            onTap: (sheet) {
-              Navigator.of(sheet).pop();
-              openExternal(widget.url);
-            },
-            iconData: Icons.open_in_new_rounded,
-            title: 'Open in browser',
-          ),
-        ],
-        materialProgressColors: ChewieProgressColors(
-          playedColor: pawPink,
-          handleColor: pawPinkLight,
-          bufferedColor: pawMauve,
-        ),
-      );
-    });
+    await video.setLooping(video.value.duration < const Duration(seconds: 30));
+    if (widget.autoplay && widget.active) {
+      await video.play();
+      _scheduleHide();
+    }
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
-    _chewie?.dispose();
+    _hideControls?.cancel();
+    _skipShown?.cancel();
     _video?.dispose();
     super.dispose();
   }
 
+  void _scheduleHide() {
+    _hideControls?.cancel();
+    _hideControls = Timer(_controlsTimeout, () {
+      if (mounted && (_video?.value.isPlaying ?? false)) {
+        setState(() => _controls = false);
+      }
+    });
+  }
+
+  void _toggleControls() {
+    setState(() => _controls = !_controls);
+    if (_controls) _scheduleHide();
+  }
+
+  void _togglePlay() {
+    final video = _video;
+    if (video == null || !video.value.isInitialized) return;
+    if (video.value.isPlaying) {
+      video.pause();
+      _hideControls?.cancel();
+    } else {
+      if (video.value.position >= video.value.duration) {
+        video.seekTo(Duration.zero);
+      }
+      video.play();
+      _scheduleHide();
+    }
+    setState(() => _controls = true);
+  }
+
+  void _skipBy(bool forward) {
+    final video = _video;
+    if (video == null || !video.value.isInitialized) return;
+    final value = video.value;
+    final target = value.position + (forward ? _skip : -_skip);
+    video.seekTo(
+      target < Duration.zero
+          ? Duration.zero
+          : target > value.duration
+          ? value.duration
+          : target,
+    );
+    HapticFeedback.selectionClick();
+    _skipShown?.cancel();
+    setState(() {
+      _skips = _skipped == forward ? _skips + 1 : 1;
+      _skipped = forward;
+    });
+    _skipShown = Timer(const Duration(milliseconds: 700), () {
+      if (mounted) setState(() => _skipped = null);
+    });
+  }
+
+  void _onDoubleTap(double width) {
+    final at = _doubleTap;
+    if (at == null) return;
+    _skipBy(at.dx > width / 2);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final chewie = _chewie;
-    if (chewie == null) {
-      return AspectRatio(
-        aspectRatio: 16 / 9,
-        child: Center(
-          child: _error != null
-              ? Text(_error!, style: const TextStyle(color: Colors.white70))
-              : _video != null
-              ? const CircularProgressIndicator()
-              : const Icon(
-                  Icons.play_circle_outline_rounded,
-                  color: Colors.white70,
-                  size: 56,
+    final video = _video;
+    final ready = video != null && video.value.isInitialized;
+    final ratio = ready && video.value.aspectRatio > 0
+        ? video.value.aspectRatio
+        : 16 / 9;
+    final picture = AspectRatio(
+      aspectRatio: ratio,
+      child: LayoutBuilder(
+        builder: (context, box) => GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: ready ? _toggleControls : null,
+          onDoubleTapDown: (details) => _doubleTap = details.localPosition,
+          onDoubleTap: ready ? () => _onDoubleTap(box.maxWidth) : null,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (ready)
+                VideoPlayer(video)
+              else
+                Center(
+                  child: _error != null
+                      ? Text(
+                          _error!,
+                          style: const TextStyle(color: Colors.white70),
+                        )
+                      : video != null
+                      ? const CircularProgressIndicator()
+                      : const Icon(
+                          Icons.play_circle_outline_rounded,
+                          color: Colors.white70,
+                          size: 56,
+                        ),
                 ),
+              if (_skipped != null)
+                Align(
+                  alignment: _skipped!
+                      ? const Alignment(.6, 0)
+                      : const Alignment(-.6, 0),
+                  child: _SkipBadge(
+                    forward: _skipped!,
+                    seconds: _skip.inSeconds * _skips,
+                  ),
+                ),
+            ],
+          ),
         ),
-      );
-    }
-    final ratio = _video!.value.aspectRatio;
-    return AspectRatio(
-      aspectRatio: ratio > 0 ? ratio : 16 / 9,
-      child: Chewie(controller: chewie),
+      ),
     );
+    final bar = ready
+        ? AnimatedOpacity(
+            opacity: _controls ? 1 : 0,
+            duration: const Duration(milliseconds: 200),
+            child: IgnorePointer(
+              ignoring: !_controls,
+              child: _VideoBar(
+                video: video,
+                onPlay: _togglePlay,
+                onTouch: _scheduleHide,
+                onDownload: widget.onDownload,
+                onOpen: () => openExternal(widget.url),
+              ),
+            ),
+          )
+        : const SizedBox(height: _VideoBar.height);
+    final player = ColoredBox(
+      color: Colors.black,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          widget.fill ? Flexible(child: picture) : picture,
+          bar,
+        ],
+      ),
+    );
+    return widget.fill ? Center(child: player) : player;
   }
+}
+
+/// The skipped seconds over the half that was double tapped.
+class _SkipBadge extends StatelessWidget {
+  const _SkipBadge({required this.forward, required this.seconds});
+
+  final bool forward;
+  final int seconds;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: Colors.black54,
+      borderRadius: BorderRadius.circular(24),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            forward ? Icons.fast_forward_rounded : Icons.fast_rewind_rounded,
+            color: Colors.white,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '${seconds}s',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// Play / pause, position, a scrubbable progress bar, mute and a menu, in a
+/// row under the video.
+class _VideoBar extends StatelessWidget {
+  const _VideoBar({
+    required this.video,
+    required this.onPlay,
+    required this.onTouch,
+    required this.onDownload,
+    required this.onOpen,
+  });
+
+  static const height = 48.0;
+
+  final VideoPlayerController video;
+  final VoidCallback onPlay;
+
+  /// Any use of the bar keeps it up a while longer.
+  final VoidCallback onTouch;
+  final VoidCallback onDownload;
+  final VoidCallback onOpen;
+
+  static String _time(Duration duration) {
+    final minutes = duration.inMinutes;
+    final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
+    if (minutes < 60) return '$minutes:$seconds';
+    final hours = duration.inHours;
+    return '$hours:${(minutes % 60).toString().padLeft(2, '0')}:$seconds';
+  }
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: height,
+    child: Listener(
+      onPointerDown: (_) => onTouch(),
+      child: ValueListenableBuilder<VideoPlayerValue>(
+        valueListenable: video,
+        builder: (context, value, _) => Row(
+          children: [
+            IconButton(
+              tooltip: value.isPlaying ? 'Pause' : 'Play',
+              onPressed: onPlay,
+              icon: Icon(
+                value.isPlaying
+                    ? Icons.pause_rounded
+                    : Icons.play_arrow_rounded,
+                color: Colors.white,
+              ),
+            ),
+            Text(
+              _time(value.position),
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+            ),
+            Expanded(
+              child: VideoProgressIndicator(
+                video,
+                allowScrubbing: true,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 20,
+                ),
+                colors: const VideoProgressColors(
+                  playedColor: pawPink,
+                  bufferedColor: pawMauve,
+                  backgroundColor: Colors.white24,
+                ),
+              ),
+            ),
+            Text(
+              _time(value.duration),
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+            IconButton(
+              tooltip: value.volume == 0 ? 'Unmute' : 'Mute',
+              onPressed: () => video.setVolume(value.volume == 0 ? 1 : 0),
+              icon: Icon(
+                value.volume == 0
+                    ? Icons.volume_off_rounded
+                    : Icons.volume_up_rounded,
+                color: Colors.white,
+              ),
+            ),
+            PopupMenuButton<VoidCallback>(
+              tooltip: 'More',
+              icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+              onSelected: (action) => action(),
+              itemBuilder: (_) => [
+                PopupMenuItem(value: onDownload, child: const Text('Download')),
+                PopupMenuItem(
+                  value: onOpen,
+                  child: const Text('Open in browser'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }

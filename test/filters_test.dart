@@ -109,6 +109,13 @@ void main() {
     expect(AppSettings.fromJson(const {}).keepHistory, isTrue);
   });
 
+  test('the gesture viewer is on by default and Paginated mode is kept', () {
+    expect(const AppSettings().gestureViewer, isTrue);
+    expect(AppSettings.fromJson(const {}).gestureViewer, isTrue);
+    final paginated = const AppSettings().copyWith(gestureViewer: false);
+    expect(AppSettings.fromJson(paginated.toJson()).gestureViewer, isFalse);
+  });
+
   group('PawchiveLink.findUrl', () {
     test('finds the address in shared text', () {
       final url = PawchiveLink.findUrl(

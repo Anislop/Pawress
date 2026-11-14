@@ -58,6 +58,7 @@ class AppSettings {
     this.checkIntervalMinutes = 60,
     this.forYouMix = ForYouMix.balanced,
     this.autoplayVideos = true,
+    this.gestureViewer = true,
     this.downloadFolderUri,
     this.downloadFolderName,
     this.askDownloadFolder = false,
@@ -90,6 +91,10 @@ class AppSettings {
   /// How often Android runs the background check; 15 is its minimum.
   final int checkIntervalMinutes;
   final bool autoplayVideos;
+
+  /// The viewer pages sideways and closes with a swipe down, as in X. Off,
+  /// it's Paginated mode: every item in one vertical scroll.
+  final bool gestureViewer;
 
   /// A storage access framework tree URI the app holds write access to.
   final String? downloadFolderUri;
@@ -142,6 +147,7 @@ class AppSettings {
     int? checkIntervalMinutes,
     ForYouMix? forYouMix,
     bool? autoplayVideos,
+    bool? gestureViewer,
     ({String uri, String name})? downloadFolder,
     bool clearDownloadFolder = false,
     bool? askDownloadFolder,
@@ -160,6 +166,7 @@ class AppSettings {
     checkIntervalMinutes: checkIntervalMinutes ?? this.checkIntervalMinutes,
     forYouMix: forYouMix ?? this.forYouMix,
     autoplayVideos: autoplayVideos ?? this.autoplayVideos,
+    gestureViewer: gestureViewer ?? this.gestureViewer,
     downloadFolderUri: clearDownloadFolder
         ? null
         : downloadFolder?.uri ?? downloadFolderUri,
@@ -187,6 +194,7 @@ class AppSettings {
     forYouMix:
         ForYouMix.values.asNameMap()[json['forYouMix']] ?? ForYouMix.balanced,
     autoplayVideos: json['autoplayVideos'] as bool? ?? true,
+    gestureViewer: json['gestureViewer'] as bool? ?? true,
     downloadFolderUri: json['downloadFolderUri'] as String?,
     downloadFolderName: json['downloadFolderName'] as String?,
     askDownloadFolder: json['askDownloadFolder'] as bool? ?? false,
@@ -221,6 +229,7 @@ class AppSettings {
     'checkIntervalMinutes': checkIntervalMinutes,
     'forYouMix': forYouMix.name,
     'autoplayVideos': autoplayVideos,
+    'gestureViewer': gestureViewer,
     'downloadFolderUri': downloadFolderUri,
     'downloadFolderName': downloadFolderName,
     'askDownloadFolder': askDownloadFolder,

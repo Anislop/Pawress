@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import '../core/config.dart';
@@ -28,10 +29,13 @@ import 'settings_page.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
-/// The main screen, laid out like X on Android: a top bar that hides while
-/// scrolling down, the For You / Following / Popular tabs, and a sidebar
-/// opened from the account avatar or by swiping right on the first tab. A
-/// bottom bar appears only on Popular, to switch between artists and posts.
+/// Where the home's bottom bar goes.
+enum _Destination { home, popular, search, notifications }
+
+/// The main screen, laid out like X on Android: a bottom bar of icons (Home,
+/// Popular, Search, Notifications) that hides while scrolling down, a top
+/// bar that does the same, Home's For You / Following tabs, and a sidebar
+/// opened from the account avatar or by swiping right on the first tab.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -40,17 +44,27 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen>
-    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   static const _followingTab = 1;
-  static const _popularTab = 2;
 
   final _scaffold = GlobalKey<ScaffoldState>();
   final _nested = GlobalKey<NestedScrollViewState>();
+  final _popularNested = GlobalKey<NestedScrollViewState>();
   bool _drawerOpen = false;
-  late final TabController _tabs = TabController(length: 3, vsync: this)
+  late final TabController _tabs = TabController(length: 2, vsync: this)
     ..addListener(_onTab);
   int _tab = 0;
+  late final TabController _sections = TabController(
+    length: PopularSection.values.length,
+    vsync: this,
+  )..addListener(_onSection);
   PopularSection _section = PopularSection.artists;
+  _Destination _destination = _Destination.home;
+
+  /// Destinations are built the first time they're opened (Search loads the
+  /// whole artist list), then kept.
+  final _opened = {_Destination.home};
+  bool _barShown = true;
   late final ForYouFeed _forYou;
   late final FollowingFeed _following;
   StreamSubscription<String>? _taps;
@@ -115,6 +129,7 @@ class _HomeScreenState extends State<HomeScreen>
     _links?.cancel();
     _poll?.cancel();
     _tabs.dispose();
+    _sections.dispose();
     _forYou.dispose();
     _following.dispose();
     super.dispose();
@@ -128,14 +143,53 @@ class _HomeScreenState extends State<HomeScreen>
       _startPolling();
     } else if (state == AppLifecycleState.paused) {
       _poll?.cancel();
-      if (_tab == _followingTab) _markFollowingSeen();
+      if (_onFollowing) _markFollowingSeen();
     }
   }
+
+  bool get _onFollowing =>
+      _destination == _Destination.home && _tab == _followingTab;
 
   void _onTab() {
     if (_tabs.index == _tab) return;
     if (_tab == _followingTab) _markFollowingSeen();
     setState(() => _tab = _tabs.index);
+  }
+
+  /// Opens a bottom bar destination; the open one goes back to the top.
+  void _select(_Destination destination) {
+    if (destination == _destination) {
+      switch (destination) {
+        case _Destination.home:
+          _scrollToTop();
+        case _Destination.popular:
+          HapticFeedback.selectionClick();
+          scrollNestedToTop(_popularNested.currentState);
+        case _Destination.search || _Destination.notifications:
+          break;
+      }
+      return;
+    }
+    HapticFeedback.selectionClick();
+    if (_onFollowing) _markFollowingSeen();
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() {
+      _destination = destination;
+      _opened.add(destination);
+      _barShown = true;
+    });
+  }
+
+  /// Scrolling down puts the bottom bar away; scrolling up brings it back.
+  bool _onUserScroll(UserScrollNotification notification) {
+    if (notification.metrics.axis != Axis.vertical) return false;
+    final shown = switch (notification.direction) {
+      ScrollDirection.reverse => false,
+      ScrollDirection.forward => true,
+      ScrollDirection.idle => _barShown,
+    };
+    if (shown != _barShown) setState(() => _barShown = shown);
+    return false;
   }
 
   /// Leaving Following moves its "caught up" line to the newest post there.
@@ -158,11 +212,19 @@ class _HomeScreenState extends State<HomeScreen>
     if (index == _tabs.index && !_tabs.indexIsChanging) _scrollToTop();
   }
 
-  void _onSection(int index) {
-    final section = PopularSection.values[index];
-    if (section == _section) return _scrollToTop();
+  void _onSection() {
+    final section = PopularSection.values[_sections.index];
+    if (section == _section) return;
     HapticFeedback.selectionClick();
     setState(() => _section = section);
+  }
+
+  /// Tapping the open Popular section scrolls it back to the top.
+  void _onSectionTap(int index) {
+    if (index == _section.index && !_sections.indexIsChanging) {
+      HapticFeedback.selectionClick();
+      scrollNestedToTop(_popularNested.currentState);
+    }
   }
 
   /// Swiping right past the first tab opens the sidebar, as in X.
@@ -244,7 +306,7 @@ class _HomeScreenState extends State<HomeScreen>
           label: 'View',
           onPressed: () => creators.length == 1
               ? _openFromNotification(first.creator.key)
-              : _push((_) => const NotificationsPage()),
+              : _select(_Destination.notifications),
         ),
       ),
     );
@@ -258,7 +320,7 @@ class _HomeScreenState extends State<HomeScreen>
     }
     final follow = AppScope.read(context).followOf(key);
     if (follow == null) {
-      _push((_) => const NotificationsPage());
+      _select(_Destination.notifications);
       return;
     }
     _push((_) => CreatorPage(creator: follow.creator));
@@ -267,13 +329,18 @@ class _HomeScreenState extends State<HomeScreen>
   void _push(WidgetBuilder builder) =>
       Navigator.of(context).push(MaterialPageRoute<void>(builder: builder));
 
-  /// Back on Following or Popular returns to For You before leaving the
-  /// app, as in X.
+  /// Back on another destination returns to Home, and on Following to For
+  /// You, before leaving the app, as in X.
   @override
   Widget build(BuildContext context) => PopScope(
-    canPop: _tab == 0 || _drawerOpen,
+    canPop: (_destination == _Destination.home && _tab == 0) || _drawerOpen,
     onPopInvokedWithResult: (didPop, _) {
-      if (!didPop) _tabs.animateTo(0);
+      if (didPop) return;
+      if (_destination != _Destination.home) {
+        _select(_Destination.home);
+      } else {
+        _tabs.animateTo(0);
+      }
     },
     child: _scaffoldView(context),
   );
@@ -282,101 +349,159 @@ class _HomeScreenState extends State<HomeScreen>
     key: _scaffold,
     drawer: Sidebar(onOpen: _push),
     onDrawerChanged: (open) => setState(() => _drawerOpen = open),
-    bottomNavigationBar: AnimatedSize(
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOutCubic,
-      alignment: Alignment.topCenter,
-      child: _tab == _popularTab
-          ? NavigationBar(
-              height: 64,
-              selectedIndex: _section.index,
-              onDestinationSelected: _onSection,
-              destinations: const [
-                NavigationDestination(
-                  icon: Icon(Icons.people_outline_rounded),
-                  selectedIcon: Icon(Icons.people_rounded),
-                  label: 'Artists',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.local_fire_department_outlined),
-                  selectedIcon: Icon(Icons.local_fire_department_rounded),
-                  label: 'Posts',
-                ),
-              ],
-            )
-          : const SizedBox(width: double.infinity),
-    ),
-    body: NestedScrollView(
-      key: _nested,
-      floatHeaderSlivers: true,
-      headerSliverBuilder: (context, scrolled) => [
-        SliverOverlapAbsorber(
-          handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
-          sliver: SliverAppBar(
-            floating: true,
-            snap: true,
-            forceElevated: scrolled,
-            centerTitle: true,
-            leading: Builder(
-              builder: (context) => IconButton(
-                tooltip: 'Open menu',
-                onPressed: () => _scaffold.currentState!.openDrawer(),
-                icon: const _AccountAvatar(size: 32),
-              ),
+    bottomNavigationBar: ClipRect(
+      child: AnimatedAlign(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        alignment: Alignment.topCenter,
+        heightFactor: _barShown ? 1 : 0,
+        child: NavigationBar(
+          height: 56,
+          labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
+          selectedIndex: _destination.index,
+          onDestinationSelected: (index) => _select(_Destination.values[index]),
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.home_outlined),
+              selectedIcon: Icon(Icons.home_rounded),
+              label: 'Home',
+              tooltip: 'Home',
             ),
-            title: GestureDetector(
-              onTap: _scrollToTop,
-              child: Image.asset(logoAsset, height: 26),
+            NavigationDestination(
+              icon: Icon(Icons.local_fire_department_outlined),
+              selectedIcon: Icon(Icons.local_fire_department_rounded),
+              label: 'Popular',
+              tooltip: 'Popular',
             ),
-            actions: [
-              IconButton(
-                tooltip: 'Search',
-                icon: const Icon(Icons.search_rounded),
-                onPressed: () => _push((_) => const SearchPage()),
-              ),
-              const _BellButton(),
-            ],
-            bottom: TabBar(
-              controller: _tabs,
-              onTap: _onTabTap,
-              tabs: const [
-                Tab(text: 'For You'),
-                Tab(text: 'Following'),
-                Tab(text: 'Popular'),
-              ],
+            NavigationDestination(
+              icon: Icon(Icons.search_rounded),
+              selectedIcon: Icon(Icons.manage_search_rounded),
+              label: 'Search',
+              tooltip: 'Search',
             ),
-          ),
-        ),
-      ],
-      body: NotificationListener<OverscrollNotification>(
-        onNotification: _onOverscroll,
-        child: TabBarView(
-          controller: _tabs,
-          children: [
-            _Tab(
-              feed: _forYou,
-              empty: const StatusView(
-                icon: Icons.auto_awesome_rounded,
-                title: 'Nothing here yet',
-                body: 'Pull down to refresh.',
-              ),
+            NavigationDestination(
+              icon: _NoticesIcon(selected: false),
+              selectedIcon: _NoticesIcon(selected: true),
+              label: 'Notifications',
+              tooltip: 'Notifications',
             ),
-            _Tab(
-              feed: _following,
-              marksNew: true,
-              empty: StatusView(
-                icon: Icons.person_add_alt_1_rounded,
-                title: 'Follow artists to fill this tab',
-                body: 'Open an artist from For You or search, then tap Follow.',
-                action: 'Find artists',
-                onAction: () => _push((_) => const SearchPage()),
-              ),
-            ),
-            PopularTab(section: _section),
           ],
         ),
       ),
     ),
+    body: NotificationListener<UserScrollNotification>(
+      onNotification: _onUserScroll,
+      child: IndexedStack(
+        index: _destination.index,
+        children: [
+          for (final destination in _Destination.values)
+            if (!_opened.contains(destination))
+              const SizedBox.shrink()
+            else
+              switch (destination) {
+                _Destination.home => _home(),
+                _Destination.popular => _popular(),
+                _Destination.search => const SearchPage(),
+                _Destination.notifications => const NotificationsPage(),
+              },
+        ],
+      ),
+    ),
+  );
+
+  Widget _menuButton() => IconButton(
+    tooltip: 'Open menu',
+    onPressed: () => _scaffold.currentState!.openDrawer(),
+    icon: const _AccountAvatar(size: 32),
+  );
+
+  Widget _home() => NestedScrollView(
+    key: _nested,
+    floatHeaderSlivers: true,
+    headerSliverBuilder: (context, scrolled) => [
+      SliverOverlapAbsorber(
+        handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
+        sliver: SliverAppBar(
+          floating: true,
+          snap: true,
+          forceElevated: scrolled,
+          centerTitle: true,
+          leading: _menuButton(),
+          title: GestureDetector(
+            onTap: _scrollToTop,
+            child: Image.asset(logoAsset, height: 26),
+          ),
+          bottom: TabBar(
+            controller: _tabs,
+            onTap: _onTabTap,
+            tabs: const [
+              Tab(text: 'For You'),
+              Tab(text: 'Following'),
+            ],
+          ),
+        ),
+      ),
+    ],
+    body: NotificationListener<OverscrollNotification>(
+      onNotification: _onOverscroll,
+      child: TabBarView(
+        controller: _tabs,
+        children: [
+          _Tab(
+            feed: _forYou,
+            empty: const StatusView(
+              icon: Icons.auto_awesome_rounded,
+              title: 'Nothing here yet',
+              body: 'Pull down to refresh.',
+            ),
+          ),
+          _Tab(
+            feed: _following,
+            marksNew: true,
+            empty: StatusView(
+              icon: Icons.person_add_alt_1_rounded,
+              title: 'Follow artists to fill this tab',
+              body: 'Open an artist from For You or search, then tap Follow.',
+              action: 'Find artists',
+              onAction: () => _select(_Destination.search),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _popular() => NestedScrollView(
+    key: _popularNested,
+    floatHeaderSlivers: true,
+    headerSliverBuilder: (context, scrolled) => [
+      SliverOverlapAbsorber(
+        handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
+        sliver: SliverAppBar(
+          floating: true,
+          snap: true,
+          forceElevated: scrolled,
+          centerTitle: true,
+          leading: _menuButton(),
+          title: GestureDetector(
+            onTap: () => _onSectionTap(_section.index),
+            child: const Text(
+              'Popular',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+          bottom: TabBar(
+            controller: _sections,
+            onTap: _onSectionTap,
+            tabs: const [
+              Tab(text: 'Artists'),
+              Tab(text: 'Posts'),
+            ],
+          ),
+        ),
+      ),
+    ],
+    body: PopularTab(section: _section),
   );
 }
 
@@ -421,23 +546,24 @@ class _TabState extends State<_Tab> with AutomaticKeepAliveClientMixin {
   }
 }
 
-class _BellButton extends StatelessWidget {
-  const _BellButton();
+/// The bottom bar's bell, with the unread count.
+class _NoticesIcon extends StatelessWidget {
+  const _NoticesIcon({required this.selected});
+
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
     final unread = AppScope.of(context).unreadNotices;
-    return IconButton(
-      tooltip: 'Notifications',
-      onPressed: () => Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (_) => const NotificationsPage()),
-      ),
-      icon: Badge(
-        isLabelVisible: unread > 0,
-        backgroundColor: pawPink,
-        textColor: pawOutline,
-        label: Text(unread > 99 ? '99+' : '$unread'),
-        child: const Icon(Icons.notifications_none_rounded),
+    return Badge(
+      isLabelVisible: unread > 0,
+      backgroundColor: pawPink,
+      textColor: pawOutline,
+      label: Text(unread > 99 ? '99+' : '$unread'),
+      child: Icon(
+        selected
+            ? Icons.notifications_rounded
+            : Icons.notifications_none_rounded,
       ),
     );
   }
@@ -469,7 +595,8 @@ class _AccountAvatar extends StatelessWidget {
 }
 
 /// X-style navigation drawer: account header with counts, then Following,
-/// Notifications and Settings.
+/// Favorites, History, the tools and Settings. Search and Notifications are
+/// in the bottom bar.
 class Sidebar extends StatelessWidget {
   const Sidebar({super.key, required this.onOpen});
 
@@ -559,17 +686,6 @@ class Sidebar extends StatelessWidget {
                     icon: Icons.history_rounded,
                     label: 'History',
                     onTap: () => open((_) => const HistoryPage()),
-                  ),
-                  _SidebarItem(
-                    icon: Icons.notifications_none_rounded,
-                    label: 'Notifications',
-                    badge: state.unreadNotices,
-                    onTap: () => open((_) => const NotificationsPage()),
-                  ),
-                  _SidebarItem(
-                    icon: Icons.search_rounded,
-                    label: 'Explore',
-                    onTap: () => open((_) => const SearchPage()),
                   ),
                   _SidebarItem(
                     icon: Icons.shuffle_rounded,
