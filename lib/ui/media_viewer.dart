@@ -682,7 +682,7 @@ class _Pending extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Center(
     child: resolving
-        ? const CircularProgressIndicator()
+        ? const LoadRing()
         : Text(
             error ?? 'This file is not available.',
             style: const TextStyle(color: Colors.white70),
@@ -839,6 +839,20 @@ class _ImageItemState extends State<_ImageItem>
                 fit: fill ? BoxFit.contain : BoxFit.fitWidth,
                 frameBuilder: (context, child, frame, sync) =>
                     frame == null && !sync ? box(3 / 4) : child,
+                // The full file's ring takes over once it's asked for.
+                loadingBuilder: (context, child, progress) =>
+                    progress == null || full != null
+                    ? child
+                    : Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          child,
+                          LoadRing(
+                            progress: chunkProgress(progress),
+                            backdrop: true,
+                          ),
+                        ],
+                      ),
                 errorBuilder: (_, _, _) => box(
                   1,
                   full == null
@@ -867,15 +881,9 @@ class _ImageItemState extends State<_ImageItem>
                           alignment: Alignment.center,
                           children: [
                             child,
-                            SizedBox.square(
-                              dimension: 36,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 3,
-                                value: progress.expectedTotalBytes == null
-                                    ? null
-                                    : progress.cumulativeBytesLoaded /
-                                          progress.expectedTotalBytes!,
-                              ),
+                            LoadRing(
+                              progress: chunkProgress(progress),
+                              backdrop: true,
                             ),
                           ],
                         ),
@@ -1077,7 +1085,7 @@ class _VideoItemState extends State<_VideoItem> {
                           style: const TextStyle(color: Colors.white70),
                         )
                       : video != null
-                      ? const CircularProgressIndicator()
+                      ? const LoadRing()
                       : const Icon(
                           Icons.play_circle_outline_rounded,
                           color: Colors.white70,

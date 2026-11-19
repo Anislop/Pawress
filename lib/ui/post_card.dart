@@ -368,7 +368,7 @@ class _MediaTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final still = file.thumbnailUrl != null
-        ? NetImage(file.thumbnailUrl!)
+        ? NetImage(file.thumbnailUrl!, progress: true)
         : ColoredBox(color: pawPlum.withValues(alpha: .6));
     Widget overlay(bool playing) => Stack(
       fit: StackFit.expand,

@@ -47,6 +47,11 @@ class _HomeScreenState extends State<HomeScreen>
     with WidgetsBindingObserver, TickerProviderStateMixin {
   static const _followingTab = 1;
 
+  /// How far past For You's edge, and how far right overall, a drag goes
+  /// before the sidebar opens.
+  static const _swipeOpenPull = 40.0;
+  static const _swipeOpenDistance = 72.0;
+
   final _scaffold = GlobalKey<ScaffoldState>();
   final _nested = GlobalKey<NestedScrollViewState>();
   final _popularNested = GlobalKey<NestedScrollViewState>();
@@ -227,14 +232,44 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  /// Swiping right past the first tab opens the sidebar, as in X.
-  bool _onOverscroll(OverscrollNotification notification) {
-    if (notification.metrics.axis == Axis.horizontal &&
-        notification.overscroll < 0 &&
-        notification.dragDetails != null &&
-        _tabs.index == 0 &&
-        !(_scaffold.currentState?.isDrawerOpen ?? true)) {
-      _scaffold.currentState!.openDrawer();
+  /// Where the pager's current drag started, and how far it has pulled
+  /// past For You's left edge.
+  Offset? _swipeStart;
+  double _swipePull = 0;
+
+  /// Swiping right past the first tab opens the sidebar, as in X. Only a
+  /// deliberate, mostly sideways drag of the pager itself counts: nested
+  /// horizontal lists, a few pixels of jitter while scrolling a feed, or a
+  /// diagonal drag don't.
+  bool _onPagerScroll(ScrollNotification notification) {
+    if (notification.depth != 0 ||
+        notification.metrics.axis != Axis.horizontal) {
+      return false;
+    }
+    if (notification is ScrollStartNotification) {
+      _swipeStart = notification.dragDetails?.globalPosition;
+      _swipePull = 0;
+    } else if (notification is ScrollEndNotification) {
+      _swipeStart = null;
+    } else if (notification is OverscrollNotification) {
+      final start = _swipeStart;
+      final drag = notification.dragDetails;
+      if (start == null ||
+          drag == null ||
+          notification.overscroll >= 0 ||
+          _tabs.index != 0 ||
+          _tabs.indexIsChanging) {
+        return false;
+      }
+      _swipePull -= notification.overscroll;
+      final moved = drag.globalPosition - start;
+      if (_swipePull >= _swipeOpenPull &&
+          moved.dx >= _swipeOpenDistance &&
+          moved.dx >= moved.dy.abs() * 2 &&
+          !(_scaffold.currentState?.isDrawerOpen ?? true)) {
+        _swipeStart = null;
+        _scaffold.currentState!.openDrawer();
+      }
     }
     return false;
   }
@@ -442,8 +477,8 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       ),
     ],
-    body: NotificationListener<OverscrollNotification>(
-      onNotification: _onOverscroll,
+    body: NotificationListener<ScrollNotification>(
+      onNotification: _onPagerScroll,
       child: TabBarView(
         controller: _tabs,
         children: [

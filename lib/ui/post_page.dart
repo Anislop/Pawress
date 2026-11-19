@@ -11,6 +11,7 @@ import 'poll.dart';
 import 'post_card.dart';
 import 'tag_page.dart';
 import 'theme.dart';
+import 'translate.dart';
 import 'widgets.dart';
 
 /// A single post: creator, full text, every image and video, other
@@ -205,6 +206,7 @@ class _PostPageState extends State<PostPage> {
         Creator(id: post.user, service: post.service, name: post.user);
     final media = post.media;
     final others = post.files.where((f) => !f.isViewable).toList();
+    final text = plainText(post.content);
     return ListView(
       padding: const EdgeInsets.only(bottom: 48),
       children: [
@@ -257,7 +259,7 @@ class _PostPageState extends State<PostPage> {
                       ].join(' · '),
                       style: TextStyle(color: ink(.5), fontSize: 13),
                     ),
-                    if (plainText(post.content).isNotEmpty) ...[
+                    if (text.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       HtmlContent(
                         post.content,
@@ -270,6 +272,13 @@ class _PostPageState extends State<PostPage> {
                             : post.provider.siteUrl,
                       ),
                     ],
+                    if (text.isNotEmpty || post.title.isNotEmpty)
+                      TranslatePost(
+                        key: ValueKey(post.key),
+                        postKey: post.key,
+                        title: post.title,
+                        text: text,
+                      ),
                   ],
                 ),
               ),
@@ -401,7 +410,15 @@ class _MediaBlock extends StatelessWidget {
                     ? child
                     : AspectRatio(
                         aspectRatio: 1,
-                        child: ColoredBox(color: panel),
+                        child: ColoredBox(
+                          color: panel,
+                          child: Center(
+                            child: LoadRing(
+                              progress: chunkProgress(progress),
+                              color: pinkText,
+                            ),
+                          ),
+                        ),
                       ),
                 errorBuilder: (_, _, _) => AspectRatio(
                   aspectRatio: 16 / 9,

@@ -54,7 +54,7 @@ lib/
   ui/
     app_scope.dart     AppScope.of(context) / AppScope.read(context) give AppState
     theme.dart         Palette (from assets; Plum, AMOLED, Light, Auto), buildTheme(), pinkText, BrandMark, SectionLabel
-    widgets.dart       NetImage, CreatorAvatar, ServiceBadge, HtmlContent, FeedView (hides blocked posts, "caught up" line), StatusView, BackToTop, ProviderChips, scroll / copy / time / size helpers
+    widgets.dart       NetImage, LoadRing, CreatorAvatar, ServiceBadge, HtmlContent, FeedView (hides blocked posts, "caught up" line), StatusView, BackToTop, ProviderChips, scroll / copy / time / size helpers
     splash.dart        BooruPlus-style splash + revealFromBottom transition
     onboarding.dart    Four parallax slides (art lags, text leads), notification permission, optional sign-in
     home.dart          HomeScreen (hiding bottom bar: Home with For You / Following tabs, Popular with Artists / Posts tabs, Search, Notifications), Sidebar (drawer, provider switches) and showMirrorDialog
@@ -66,7 +66,8 @@ lib/
     autoplay.dart      FeedAutoplay (picks the one playing tile) and AutoplayMedia (muted video / GIF tile)
     downloads.dart     downloadFiles() (folder choice + enqueue), pickDownloadFolder(), DownloadsPage
     update_dialog.dart showUpdateDialog: changelog, progress, install errors
-    post_page.dart     Full post: text, poll, actions, media, attachments, tags, newer / older post, comments
+    post_page.dart     Full post: text, translation, poll, actions, media, attachments, tags, newer / older post, comments
+    translate.dart     PostTranslator (ML Kit language ID + offline translation) and TranslatePost
     media_viewer.dart  Full-screen viewer: gesture mode (pages sideways, swipe down closes) or Paginated mode (one vertical scroll), zoomable images, video with its controls under it, share / Set as, data saver
     share.dart         shareImage / setImageAs (from the image cache), imageCacheBytes, clearImageCache
     links.dart         openPawchiveLink: a shared or opened pawchive.pw link to a post, artist or tag page
@@ -94,6 +95,7 @@ test/
   filters_test.dart         Blocklist, Visit, links in shared text, new settings, AppState blocking / not interested / history / Following marker
   providers_test.dart       Provider hosts and mirrors, Coomer tags, popular JSON, CoomerApi and ArchiveApi routing over a MockClient
   app_update_test.dart      Release picking, nightly notes, AppUpdater over a mocked channel and GitHub
+  translate_test.dart       Language tags to ML Kit languages, the system-language target
 android/app/src/main/kotlin/.../MainActivity.kt   pawress/updater channel: appVersion, installUpdate, notificationSettings; pawress/intents: initialLink, link, shareFile, setAs, viewFile, viewFolder, isMetered
 .github/workflows/          ci.yml (PRs, and called by CD) and cd.yml (nightly / tagged releases)
 docs/pawchive-api.md        API reference and quirks
@@ -219,13 +221,29 @@ docs/IMPLEMENTATION1.md     Backlog of ideas not built yet, with where each woul
   `AndroidIntents.isMetered`, cached 30 s): feed tiles don't autoplay and
   the viewer keeps thumbnails until "Load full image" (per image, or all
   from ⋮). Settings shows the image cache size and clears it.
+- **Load progress.** `LoadRing` is a ring that fills with the download
+  (`chunkProgress` of an `ImageChunkEvent`, percentage inside) and spins
+  while the size is unknown. The viewer's thumbnails and full files, the
+  post page's media and feed / media-grid tiles (`NetImage(progress: true)`)
+  use it; videos spin, since video_player reports nothing before it starts.
+- **Translation.** `TranslatePost` (under a post's text on `PostPage`) uses
+  ML Kit offline: `PostTranslator.detect` identifies the language with the
+  model bundled in the app and shows "Translate from …" only when it
+  differs from the system language (`translationTarget`, English when ML
+  Kit can't translate into it). The first translation for a language asks
+  before downloading its pack (about 30 MB, any network); text is then
+  translated line by line on the device and kept for the session by post
+  key. Nothing is sent to a server.
 - **Share and Set as.** The viewer copies the current image out of the
   image cache (`DefaultCacheManager`, no new download when it was viewed)
   into `cache/shared/` and hands it to the share sheet or `ACTION_ATTACH_DATA`
   through the FileProvider, which only exposes that folder and `updates/`.
-- **Sidebar gesture.** `HomeScreen._onOverscroll` opens the drawer when the
-  For You tab is dragged past its left edge; the drawer closes with its own
-  drag.
+- **Sidebar gesture.** `HomeScreen._onPagerScroll` opens the drawer when the
+  For You tab is dragged past its left edge: only the pager's own
+  notifications (depth 0) count, and the drag must pull 40 px past the edge,
+  move 72 px right of where it started and stay at least twice as sideways
+  as vertical, so jitter while scrolling a feed or nested horizontal lists
+  don't open it. The drawer closes with its own drag.
 - **Bottom bar.** `HomeScreen` keeps Home, Popular, Search
   (`SearchPage`) and Notifications (`NotificationsPage`) in an
   `IndexedStack`, each built the first time it's opened (Search loads the

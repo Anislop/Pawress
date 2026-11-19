@@ -229,7 +229,7 @@ class _MediaCell extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           poster != null
-              ? NetImage(poster)
+              ? NetImage(poster, progress: true)
               : ColoredBox(color: pawPlum.withValues(alpha: .6)),
           if (file.isVideo)
             Center(

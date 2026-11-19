@@ -20,6 +20,7 @@ class NetImage extends StatelessWidget {
     this.height,
     this.fallback,
     this.placeholder,
+    this.progress = false,
   });
 
   final String url;
@@ -31,6 +32,9 @@ class NetImage extends StatelessWidget {
   /// Shown while loading instead of a plain panel.
   final Widget? placeholder;
 
+  /// Draws a [LoadRing] filling with the download over the panel.
+  final bool progress;
+
   @override
   Widget build(BuildContext context) => CachedNetworkImage(
     imageUrl: url,
@@ -39,7 +43,22 @@ class NetImage extends StatelessWidget {
     width: width,
     height: height,
     fadeInDuration: const Duration(milliseconds: 150),
-    placeholder: (_, _) => placeholder ?? ColoredBox(color: panel),
+    placeholder: progress
+        ? null
+        : (_, _) => placeholder ?? ColoredBox(color: panel),
+    progressIndicatorBuilder: progress
+        ? (_, _, download) => ColoredBox(
+            color: panel,
+            child: Center(
+              child: LoadRing(
+                progress: download.progress,
+                size: 26,
+                color: pinkText,
+                label: false,
+              ),
+            ),
+          )
+        : null,
     errorWidget: (_, _, _) =>
         fallback ??
         ColoredBox(
@@ -51,6 +70,85 @@ class NetImage extends StatelessWidget {
 
 ImageProvider netImageProvider(String url) =>
     CachedNetworkImageProvider(url, headers: mediaHeaders);
+
+/// How much of an image has arrived, or null when the size isn't known.
+double? chunkProgress(ImageChunkEvent? event) {
+  final total = event?.expectedTotalBytes;
+  if (event == null || total == null || total <= 0) return null;
+  return (event.cumulativeBytesLoaded / total).clamp(0.0, 1.0);
+}
+
+/// A ring that fills as a download arrives, with the percentage inside;
+/// it spins while the size isn't known yet.
+class LoadRing extends StatelessWidget {
+  const LoadRing({
+    super.key,
+    this.progress,
+    this.size = 46,
+    this.color = Colors.white,
+    this.label = true,
+    this.backdrop = false,
+  });
+
+  /// 0 to 1, or null for a spinning ring.
+  final double? progress;
+  final double size;
+  final Color color;
+
+  /// Shows the percentage inside the ring.
+  final bool label;
+
+  /// Puts the ring on a dark disc so it reads over any picture.
+  final bool backdrop;
+
+  @override
+  Widget build(BuildContext context) {
+    final stroke = size < 32 ? 2.5 : 3.5;
+    final value = progress;
+    Widget ring(double? value) => Stack(
+      alignment: Alignment.center,
+      children: [
+        SizedBox.square(
+          dimension: size,
+          child: CircularProgressIndicator(
+            value: value,
+            strokeWidth: stroke,
+            strokeCap: StrokeCap.round,
+            color: color,
+            backgroundColor: color.withValues(alpha: .18),
+          ),
+        ),
+        if (label && value != null)
+          Text(
+            '${(value * 100).round()}',
+            style: TextStyle(
+              color: color,
+              fontSize: size * .27,
+              fontWeight: FontWeight.w700,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+      ],
+    );
+    final child = value == null
+        ? ring(null)
+        // Chunks arrive in bursts; easing between them keeps the fill smooth.
+        : TweenAnimationBuilder<double>(
+            tween: Tween(end: value),
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOut,
+            builder: (_, value, _) => ring(value),
+          );
+    if (!backdrop) return child;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: .45),
+        shape: BoxShape.circle,
+      ),
+      child: Padding(padding: const EdgeInsets.all(6), child: child),
+    );
+  }
+}
 
 class CreatorAvatar extends StatelessWidget {
   const CreatorAvatar(this.creator, {super.key, this.size = 40});

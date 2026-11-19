@@ -33,6 +33,10 @@ Flutter and laid out like X on Android.
   attachments, tags and threaded comments. Every post has a comments button
   (a sheet over the feed) and a like button, with the favorite count on
   popular posts.
+- **Translation.** Posts in another language get "Translate from …", which
+  translates them into your system language (English otherwise) on the
+  device with Google ML Kit. Each language pack (about 30 MB) is downloaded
+  once, after asking; post text is never sent anywhere.
 - **Favorites.** Liked posts, kept on the device and synced with your Pawchive
   favorite posts when signed in.
 - **Media viewer.** Full screen, with a post's images and videos one under
